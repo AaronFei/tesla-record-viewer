@@ -2314,6 +2314,28 @@ message SeiMetadata {
           if (vid && vid.readyState >= 2) drawContain(ctx, vid, x, y, w, h);
         });
 
+        // Composite: label each cell with its camera. Top-row labels are pushed below a
+        // top watermark so they never overlap the timestamp.
+        if (camList.length > 1) {
+          const topShift = pos.includes('top') ? 56 * S : 0;
+          ctx.save();
+          ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+          ctx.font = `600 ${Math.round(15 * S)}px system-ui, sans-serif`;
+          layout.forEach(([cam, x, y, w, h]) => {
+            const label = CAMERA_LABELS[cam] || cam;
+            const lx = x + 12 * S, ly = y + 16 * S + (y < 1 ? topShift : 0);
+            const tw = ctx.measureText(label).width;
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(lx - 6 * S, ly - 12 * S, tw + 12 * S, 24 * S, 6 * S);
+            else ctx.rect(lx - 6 * S, ly - 12 * S, tw + 12 * S, 24 * S);
+            ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.fillText(label, lx, ly);
+          });
+          ctx.restore();
+        }
+
         // Watermark (timestamp / text / both), scaled to resolution
         const tsStr = tsBase ? formatFootageClock(tsBase, exportVideos[tsBaseCam] ? exportVideos[tsBaseCam].currentTime : 0) : '';
         let lines;
