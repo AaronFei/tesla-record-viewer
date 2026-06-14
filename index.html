@@ -230,8 +230,11 @@
     #telemetry-hud .tgear { background: #ffffff; color: #111; }
     #telemetry-hud .tbrake { background: #dc2626; color: #fff; }
     #telemetry-hud .tap { background: #2563eb; color: #fff; }
-    /* accelerator bar */
-    #telemetry-hud .taccel { display: flex; align-items: center; gap: 8px; width: 100%; }
+    /* gear/accel row */
+    #telemetry-hud .thud-mid { display: flex; align-items: center; gap: 10px; width: 100%; }
+    #telemetry-hud .thud-badges { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    /* accelerator bar (right side of the gear row) */
+    #telemetry-hud .taccel { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
     #telemetry-hud .tlabel { font-size: 10px; color: #94a3b8; letter-spacing: .04em; }
     #telemetry-hud .tbar { flex: 1; height: 7px; background: #27272a; border-radius: 99px; overflow: hidden; }
     #telemetry-hud .tbar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #22c55e, #84cc16); transition: width .1s linear; }
@@ -542,15 +545,16 @@
             </svg>
           </div>
 
-          <div id="tw-badges" class="thud-bot">
-            <span id="t-gear" class="tpill tgear">P</span>
-            <span id="t-ap" class="tpill tap" style="display:none">Autopilot</span>
-            <span id="t-brake" class="tpill tbrake" style="display:none">煞車</span>
-          </div>
-
-          <div id="tw-accel" class="taccel">
-            <span class="tlabel">油門</span>
-            <div class="tbar"><div id="t-accel-fill" class="tbar-fill"></div></div>
+          <div class="thud-mid">
+            <div id="tw-badges" class="thud-badges">
+              <span id="t-gear" class="tpill tgear">P</span>
+              <span id="t-ap" class="tpill tap" style="display:none">Autopilot</span>
+              <span id="t-brake" class="tpill tbrake" style="display:none">煞車</span>
+            </div>
+            <div id="tw-accel" class="taccel">
+              <span class="tlabel">油門</span>
+              <div class="tbar"><div id="t-accel-fill" class="tbar-fill"></div></div>
+            </div>
           </div>
 
           <div class="thud-instr">
