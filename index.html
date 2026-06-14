@@ -365,25 +365,29 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.10.1</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.11.0</div>
         </div>
       </div>
       
       <div class="flex items-center gap-x-2 text-sm">
-        <div onclick="toggleEncNotice()" title="Tesla 2026.20 加密影片說明 / 關閉加密步驟"
+        <div onclick="toggleEncNotice()" title="Tesla 2026.20 加密影片說明 / 關閉加密步驟" data-i18n-title="topbar.encNotice.btn.title"
              class="px-3 py-1.5 rounded-lg bg-amber-950/50 border border-amber-900 hover:bg-amber-900/40 cursor-pointer flex items-center gap-x-2 text-xs text-amber-300">
           <i class="fa-solid fa-lock"></i>
-          <span>加密影片?</span>
+          <span data-i18n="topbar.encNotice.btn">加密影片?</span>
         </div>
         <div class="hidden sm:flex px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 items-center gap-x-2 text-xs">
           <i class="fa-solid fa-shield-halved text-emerald-400"></i>
-          <span class="text-emerald-400 font-medium">100% 本地處理</span>
+          <span class="text-emerald-400 font-medium" data-i18n="topbar.badge.local">100% 本地處理</span>
         </div>
         <div onclick="showInfo()"
              class="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 cursor-pointer flex items-center gap-x-2 text-xs">
           <i class="fa-solid fa-info-circle"></i>
-          <span>關於</span>
+          <span data-i18n="topbar.about">關於</span>
         </div>
+        <button onclick="toggleLang()" id="lang-btn" title="Language / 語言" data-i18n-title="topbar.lang.title"
+             class="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 cursor-pointer flex items-center gap-x-2 text-xs font-semibold">
+          <i class="fa-solid fa-language"></i><span id="lang-label">EN</span>
+        </button>
       </div>
     </div>
   </div>
@@ -396,21 +400,21 @@
       <div class="flex items-start gap-3">
         <i class="fa-solid fa-lock text-amber-400 mt-1"></i>
         <div class="flex-1 text-sm">
-          <div class="font-semibold text-amber-300 mb-1">影片打不開？Tesla 2026.20 起「預設加密」行車記錄影片</div>
-          <p class="text-amber-200/80 mb-2">新版車輛會把影片存成 <code class="px-1 rounded bg-black/40">EncryptedClips</code>（加密資料），一般播放器與本檢視器都<b>無法直接播放</b> —— 這不是 codec / H.265 問題。</p>
+          <div class="font-semibold text-amber-300 mb-1" data-i18n="notice.enc.title">影片打不開？Tesla 2026.20 起「預設加密」行車記錄影片</div>
+          <p class="text-amber-200/80 mb-2" data-i18n-html="notice.enc.body">新版車輛會把影片存成 <code class="px-1 rounded bg-black/40">EncryptedClips</code>（加密資料），一般播放器與本檢視器都<b>無法直接播放</b> —— 這不是 codec / H.265 問題。</p>
           <ul class="space-y-1.5 text-amber-100/85">
-            <li class="flex gap-2"><i class="fa-solid fa-unlock text-amber-400 mt-1 text-xs"></i><span><b>解密已錄好的影片：</b>把加密 <code class="px-1 rounded bg-black/40">.mp4</code> 複製到電腦 → 開 <a href="https://dashcam.tesla.com" target="_blank" rel="noopener" class="underline font-medium text-amber-200 hover:text-white">dashcam.tesla.com</a> → 用 Tesla 帳號登入 → 上傳後在你瀏覽器<b>本機解密下載</b>（檔案不會上傳給 Tesla）。解密後的 MP4 即可丟進本檢視器播放。</span></li>
-            <li class="flex gap-2"><i class="fa-solid fa-toggle-off text-amber-400 mt-1 text-xs"></i><span><b>不想再加密（之後的新影片）：</b>在車機 <b>「控制 Controls」→「安全 Safety」→ 關閉「加密行車記錄影片 Encrypt Dashcam Recordings」</b>。<span class="text-amber-300/70">註：此設定只影響之後新錄的影片；已加密的舊檔仍需用上面的工具解密。</span></span></li>
+            <li class="flex gap-2"><i class="fa-solid fa-unlock text-amber-400 mt-1 text-xs"></i><span data-i18n-html="notice.enc.step.decrypt"><b>解密已錄好的影片：</b>把加密 <code class="px-1 rounded bg-black/40">.mp4</code> 複製到電腦 → 開 <a href="https://dashcam.tesla.com" target="_blank" rel="noopener" class="underline font-medium text-amber-200 hover:text-white">dashcam.tesla.com</a> → 用 Tesla 帳號登入 → 上傳後在你瀏覽器<b>本機解密下載</b>（檔案不會上傳給 Tesla）。解密後的 MP4 即可丟進本檢視器播放。</span></li>
+            <li class="flex gap-2"><i class="fa-solid fa-toggle-off text-amber-400 mt-1 text-xs"></i><span data-i18n-html="notice.enc.step.disable"><b>不想再加密（之後的新影片）：</b>在車機 <b>「控制 Controls」→「安全 Safety」→ 關閉「加密行車記錄影片 Encrypt Dashcam Recordings」</b>。<span class="text-amber-300/70">註：此設定只影響之後新錄的影片；已加密的舊檔仍需用上面的工具解密。</span></span></li>
           </ul>
           <div class="mt-3 flex flex-wrap gap-2">
             <a href="https://dashcam.tesla.com" target="_blank" rel="noopener"
                class="inline-flex items-center gap-x-2 px-4 py-1.5 text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-black rounded-xl transition-colors">
               <i class="fa-solid fa-up-right-from-square"></i>
-              <span>前往 Tesla 官方解密工具</span>
+              <span data-i18n="notice.enc.cta">前往 Tesla 官方解密工具</span>
             </a>
           </div>
         </div>
-        <button onclick="dismissEncryptionNotice()" title="關閉提示"
+        <button onclick="dismissEncryptionNotice()" title="關閉提示" data-i18n-title="notice.enc.dismiss.title"
                 class="text-amber-400/60 hover:text-amber-100 px-2 py-1 -mt-1 -mr-1">
           <i class="fa-solid fa-xmark"></i>
         </button>
@@ -429,13 +433,13 @@
           <button onclick="selectFolder()"
                   class="flex items-center gap-x-2 px-4 py-2.5 bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-2xl transition-all shadow-sm text-sm">
             <i class="fa-solid fa-folder-open"></i>
-            <span id="select-btn-text">選擇 TeslaCam 資料夾</span>
+            <span id="select-btn-text" data-i18n="sidebar.selectFolder">選擇 TeslaCam 資料夾</span>
           </button>
         </div>
 
         <div id="fallback-note" class="hidden text-xs px-3 py-2 bg-amber-950 border border-amber-900 text-amber-400 rounded-xl flex items-center gap-2">
           <i class="fa-solid fa-exclamation-triangle"></i>
-          <span>瀏覽器不支援進階資料夾 API，已切換為檔案選擇模式（建議使用 Chrome / Edge）</span>
+          <span data-i18n="sidebar.fallbackNote">瀏覽器不支援進階資料夾 API，已切換為檔案選擇模式（建議使用 Chrome / Edge）</span>
         </div>
 
         <!-- Status -->
@@ -447,7 +451,7 @@
         <!-- Events List header -->
         <div class="flex items-baseline justify-between shrink-0">
           <div>
-            <span class="section-title">事件列表</span>
+            <span class="section-title" data-i18n="sidebar.events.title">事件列表</span>
             <span id="event-count" class="ml-2 text-xs text-zinc-500"></span>
           </div>
         </div>
@@ -455,19 +459,19 @@
         <!-- Date range filter -->
         <div class="flex items-center gap-1.5 text-xs shrink-0">
           <i class="fa-regular fa-calendar text-zinc-500"></i>
-          <input type="date" id="filter-start" onchange="renderEvents()" title="起始日期"
+          <input type="date" id="filter-start" onchange="renderEvents()" title="起始日期" data-i18n-title="filter.start.title"
                  class="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-xs flex-1 min-w-0 text-zinc-300 [color-scheme:dark]">
           <span class="text-zinc-600">→</span>
-          <input type="date" id="filter-end" onchange="renderEvents()" title="結束日期"
+          <input type="date" id="filter-end" onchange="renderEvents()" title="結束日期" data-i18n-title="filter.end.title"
                  class="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-xs flex-1 min-w-0 text-zinc-300 [color-scheme:dark]">
-          <button onclick="clearDateFilter()" title="清除日期篩選"
+          <button onclick="clearDateFilter()" title="清除日期篩選" data-i18n-title="filter.clear.title"
                   class="px-1.5 py-1 text-zinc-500 hover:text-zinc-200"><i class="fa-solid fa-xmark"></i></button>
         </div>
 
         <!-- Continuous playback toggle -->
         <label class="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer select-none shrink-0">
           <input type="checkbox" id="continuous-toggle" class="accent-[#e82127]">
-          <span>連續播放（自動串接相鄰分段）</span>
+          <span data-i18n="sidebar.continuousPlay">連續播放（自動串接相鄰分段）</span>
         </label>
 
         <!-- Scrollable list region -->
@@ -481,19 +485,19 @@
             <div class="mx-auto w-12 h-12 flex items-center justify-center rounded-2xl bg-zinc-900 mb-4">
               <i class="fa-solid fa-folder-open text-3xl text-zinc-600"></i>
             </div>
-            <div class="text-base font-medium mb-1">尚未載入任何資料</div>
-            <p class="text-xs text-zinc-500">點擊上方「選擇 TeslaCam 資料夾」開始。可選整個 TeslaCam 資料夾，或 SentryClips / SavedClips 子資料夾。</p>
+            <div class="text-base font-medium mb-1" data-i18n="empty.noData.title">尚未載入任何資料</div>
+            <p class="text-xs text-zinc-500" data-i18n="empty.noData.body">點擊上方「選擇 TeslaCam 資料夾」開始。可選整個 TeslaCam 資料夾，或 SentryClips / SavedClips 子資料夾。</p>
           </div>
         </div>
 
         <div class="text-[11px] px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center gap-2 shrink-0">
           <div class="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
-          <span class="text-emerald-300">資料永遠留在本地，絕不上傳</span>
+          <span class="text-emerald-300" data-i18n="sidebar.localOnly">資料永遠留在本地，絕不上傳</span>
         </div>
       </aside>
 
       <!-- COLLAPSE TOGGLE -->
-      <button id="collapse-btn" onclick="toggleLeftPane()" title="收合檔案列表"
+      <button id="collapse-btn" onclick="toggleLeftPane()" title="收合檔案列表" data-i18n-title="sidebar.collapse.title"
               class="hidden lg:flex shrink-0 self-stretch px-1 items-center rounded-xl border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-400">
         <i id="collapse-icon" class="fa-solid fa-chevron-left text-xs"></i>
       </button>
@@ -504,7 +508,7 @@
       <!-- Player Section -->
       <div id="player-section" class="hidden">
       <div class="flex items-center mb-3 shrink-0">
-        <span class="section-title">同步播放器</span>
+        <span class="section-title" data-i18n="player.title">同步播放器</span>
         <span id="current-event-name" class="ml-3 text-sm font-medium text-white"></span>
       </div>
 
@@ -516,7 +520,7 @@
           <button onclick="togglePlayAll()" id="play-btn"
                   class="px-5 h-10 flex items-center justify-center gap-x-2 bg-white hover:bg-zinc-100 text-black font-semibold rounded-2xl text-sm w-28 shrink-0">
             <i class="fa-solid fa-play mr-1" id="play-icon"></i>
-            <span id="play-text">播放</span>
+            <span id="play-text" data-i18n="controls.play">播放</span>
           </button>
 
           <div class="flex items-center gap-x-2 flex-1 min-w-0">
@@ -528,10 +532,10 @@
 
         <!-- Row 2: tools -->
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <button onclick="toggleView()" id="view-btn" title="切換檢視：主畫面 ↔ 六宮格（全部鏡頭）"
-                  class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 flex items-center gap-1.5 text-xs"><i class="fa-solid fa-table-cells" id="view-icon"></i><span id="view-label">六宮格</span></button>
+          <button onclick="toggleView()" id="view-btn" title="切換檢視：主畫面 ↔ 六宮格（全部鏡頭）" data-i18n-title="controls.view.title"
+                  class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 flex items-center gap-1.5 text-xs"><i class="fa-solid fa-table-cells" id="view-icon"></i><span id="view-label" data-i18n="controls.view.grid">六宮格</span></button>
           <div class="flex items-center gap-x-1.5 pl-3 border-l border-zinc-800">
-            <span class="text-xs text-zinc-500">速度</span>
+            <span class="text-xs text-zinc-500" data-i18n="controls.speed">速度</span>
             <select id="speed-select" onchange="setPlaybackSpeed(this.value)"
                     class="bg-zinc-950 border border-zinc-700 text-xs rounded-xl px-3 py-1.5 focus:outline-none">
               <option value="0.5">0.5×</option>
@@ -544,12 +548,12 @@
 
           <!-- Mark in/out for export -->
           <div class="flex items-center gap-1.5 text-xs pl-3 border-l border-zinc-800">
-            <button onclick="setMark('in')" title="標記匯出起點（目前位置）"
-                    class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 font-mono">⟮ 起點</button>
-            <button onclick="setMark('out')" title="標記匯出終點（目前位置）"
-                    class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 font-mono">終點 ⟯</button>
+            <button onclick="setMark('in')" title="標記匯出起點（目前位置）" data-i18n-title="controls.mark.in.title"
+                    class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 font-mono" data-i18n="controls.mark.in">⟮ 起點</button>
+            <button onclick="setMark('out')" title="標記匯出終點（目前位置）" data-i18n-title="controls.mark.out.title"
+                    class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 font-mono" data-i18n="controls.mark.out">終點 ⟯</button>
             <span id="mark-readout" class="text-zinc-400 font-mono"></span>
-            <button onclick="clearMarks()" id="mark-clear" class="hidden px-1 py-1 text-zinc-500 hover:text-zinc-200" title="清除標記"><i class="fa-solid fa-xmark"></i></button>
+            <button onclick="clearMarks()" id="mark-clear" class="hidden px-1 py-1 text-zinc-500 hover:text-zinc-200" title="清除標記" data-i18n-title="controls.mark.clear.title"><i class="fa-solid fa-xmark"></i></button>
           </div>
 
           <!-- Actions (pushed to the right) -->
@@ -557,18 +561,18 @@
             <button onclick="onTelemetryBtn()" id="telemetry-btn"
                     class="flex items-center gap-x-2 px-3 py-1.5 text-sm font-medium border border-zinc-700 hover:bg-zinc-800 rounded-2xl transition-colors">
               <i class="fa-solid fa-gauge-high" id="telemetry-icon"></i>
-              <span id="telemetry-label">解析遙測</span>
+              <span id="telemetry-label" data-i18n="controls.telemetry.parse">解析遙測</span>
             </button>
 
             <label class="flex items-center gap-x-2 text-sm cursor-pointer select-none">
               <input type="checkbox" id="watermark-toggle" checked onchange="updateWatermarkVisibility()" class="accent-[#e82127]">
-              <span>顯示浮水印</span>
+              <span data-i18n="controls.watermark.show">顯示浮水印</span>
             </label>
 
             <button onclick="openExportModal()"
                     class="flex items-center gap-x-2 px-4 py-1.5 text-sm font-semibold bg-[#e82127] hover:bg-red-700 active:bg-red-800 rounded-2xl transition-colors">
               <i class="fa-solid fa-download"></i>
-              <span>匯出影片</span>
+              <span data-i18n="controls.export">匯出影片</span>
             </button>
           </div>
         </div>
@@ -580,17 +584,17 @@
 
         <!-- Telemetry HUD — horizontal bottom bar (widgets toggled by settings) -->
         <div id="telemetry-hud" class="hidden">
-          <i id="t-blink-left" class="fa-solid fa-caret-left tblink" title="左方向燈"></i>
+          <i id="t-blink-left" class="fa-solid fa-caret-left tblink" title="左方向燈" data-i18n-title="hud.blinker.left.title"></i>
           <div id="tw-speed" class="tspeed"><span id="t-speed-val">0</span><span class="tunit">km/h</span></div>
-          <i id="t-blink-right" class="fa-solid fa-caret-right tblink" title="右方向燈"></i>
-          <img id="tw-steer" class="tsteer" width="32" height="32" alt="方向盤" title="方向盤">
+          <i id="t-blink-right" class="fa-solid fa-caret-right tblink" title="右方向燈" data-i18n-title="hud.blinker.right.title"></i>
+          <img id="tw-steer" class="tsteer" width="32" height="32" alt="方向盤" title="方向盤" data-i18n-title="hud.steer.alt">
           <span id="t-gear" class="tpill tgear">P</span>
           <span id="t-ap" class="tpill tap" style="display:none">Autopilot</span>
-          <span id="t-brake" class="tpill tbrake" style="display:none">煞車</span>
-          <div id="tw-accel" class="taccel" title="油門">
+          <span id="t-brake" class="tpill tbrake" style="display:none" data-i18n="hud.brake">煞車</span>
+          <div id="tw-accel" class="taccel" title="油門" data-i18n-title="hud.accel.title">
             <div class="tbar"><div id="t-accel-fill" class="tbar-fill"></div></div>
           </div>
-          <div id="tw-gforce" class="tinstr" title="加速度 G 值">
+          <div id="tw-gforce" class="tinstr" title="加速度 G 值" data-i18n-title="hud.gforce.title">
             <svg viewBox="0 0 60 60" width="44" height="44">
               <circle cx="30" cy="30" r="27" fill="none" stroke="#52525b" stroke-width="2"/>
               <line x1="30" y1="5" x2="30" y2="55" stroke="#3f3f46" stroke-width="1"/>
@@ -598,7 +602,7 @@
               <circle id="t-g-dot" cx="30" cy="30" r="4.5" fill="#e82127"/>
             </svg>
           </div>
-          <div id="tw-compass" class="tinstr" title="車頭朝向">
+          <div id="tw-compass" class="tinstr" title="車頭朝向" data-i18n-title="hud.compass.title">
             <svg viewBox="0 0 60 60" width="44" height="44">
               <circle cx="30" cy="30" r="27" fill="none" stroke="#52525b" stroke-width="2"/>
               <g id="t-compass-rose">
@@ -615,11 +619,11 @@
         <!-- GPS maps (bottom-right): street-follow view + whole-route minimap -->
         <div id="telemetry-maps">
           <div id="telemetry-follow" class="hidden">
-            <canvas id="t-follow" width="160" height="160" onclick="toggleMapExpand('follow')" title="街道導航圖（點擊放大／縮小）"></canvas>
+            <canvas id="t-follow" width="160" height="160" onclick="toggleMapExpand('follow')" title="街道導航圖（點擊放大／縮小）" data-i18n-title="hud.follow.title"></canvas>
           </div>
           <div id="telemetry-map" class="hidden">
-            <canvas id="t-map" width="160" height="160" onclick="toggleMapExpand('map')" title="GPS 路徑圖（點擊放大／縮小）"></canvas>
-            <a id="t-map-link" href="#" target="_blank" rel="noopener" class="tmaplink">Google 地圖 ↗</a>
+            <canvas id="t-map" width="160" height="160" onclick="toggleMapExpand('map')" title="GPS 路徑圖（點擊放大／縮小）" data-i18n-title="hud.map.title"></canvas>
+            <a id="t-map-link" href="#" target="_blank" rel="noopener" class="tmaplink" data-i18n="hud.map.link">Google 地圖 ↗</a>
           </div>
         </div>
       </div>
@@ -634,8 +638,8 @@
       <div id="player-placeholder" class="flex-1 min-h-0 flex items-center justify-center border border-dashed border-zinc-800 rounded-3xl text-center p-8">
         <div>
           <i class="fa-solid fa-clapperboard text-4xl text-zinc-700 mb-3"></i>
-          <div class="text-zinc-400">從左側選擇一個事件開始播放</div>
-          <div class="text-xs text-zinc-600 mt-1">多鏡頭同步播放 · 時間戳記浮水印 · 可匯出</div>
+          <div class="text-zinc-400" data-i18n="player.placeholder.title">從左側選擇一個事件開始播放</div>
+          <div class="text-xs text-zinc-600 mt-1" data-i18n="player.placeholder.body">多鏡頭同步播放 · 時間戳記浮水印 · 可匯出</div>
         </div>
       </div>
 
@@ -643,45 +647,45 @@
       <details class="shrink-0 border border-zinc-800 bg-zinc-900 rounded-3xl text-sm">
         <summary class="cursor-pointer select-none px-5 py-3 font-medium flex items-center gap-2">
           <i class="fa-solid fa-water"></i>
-          <span>浮水印設定（預覽 + 匯出共用）</span>
-          <span class="text-xs text-zinc-500 font-normal ml-1">— 點此展開</span>
+          <span data-i18n="watermark.section.title">浮水印設定（預覽 + 匯出共用）</span>
+          <span class="text-xs text-zinc-500 font-normal ml-1" data-i18n="watermark.section.expand">— 點此展開</span>
         </summary>
         <div class="px-5 pb-5">
           <div class="mb-4">
-            <label class="text-xs block mb-1 text-zinc-400">浮水印模式</label>
+            <label class="text-xs block mb-1 text-zinc-400" data-i18n="watermark.mode.label">浮水印模式</label>
             <div class="flex flex-wrap items-center gap-2">
               <select id="watermark-mode" class="bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-zinc-500">
-                <option value="timestamp">時間戳記（依影片時間即時顯示）</option>
-                <option value="text">自訂文字</option>
-                <option value="both">時間戳記 ＋ 自訂文字</option>
+                <option value="timestamp" data-i18n="watermark.mode.opt.timestamp">時間戳記（依影片時間即時顯示）</option>
+                <option value="text" data-i18n="watermark.mode.opt.text">自訂文字</option>
+                <option value="both" data-i18n="watermark.mode.opt.both">時間戳記 ＋ 自訂文字</option>
               </select>
-              <span class="text-xs text-zinc-500">時間戳記 = 每段影片實際錄影起始時間 + 播放進度，自動計算並隨播放更新</span>
+              <span class="text-xs text-zinc-500" data-i18n="watermark.mode.hint">時間戳記 = 每段影片實際錄影起始時間 + 播放進度，自動計算並隨播放更新</span>
             </div>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label class="text-xs block mb-1 text-zinc-400">浮水印文字</label>
-              <input id="watermark-text" type="text" value="TeslaCam • 本地處理 • 僅供個人使用"
+              <label class="text-xs block mb-1 text-zinc-400" data-i18n="watermark.text.label">浮水印文字</label>
+              <input id="watermark-text" type="text" value="TeslaCam • 本地處理 • 僅供個人使用" data-i18n-val="watermark.text.default"
                      class="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-zinc-500">
             </div>
             <div>
-              <label class="text-xs block mb-1 text-zinc-400">位置</label>
+              <label class="text-xs block mb-1 text-zinc-400" data-i18n="watermark.pos.label">位置</label>
               <select id="watermark-pos" class="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm">
-                <option value="top" selected>頂部中央</option>
-                <option value="bottom">底部中央</option>
-                <option value="bottom-right">右下</option>
-                <option value="top-left">左上</option>
+                <option value="top" selected data-i18n="watermark.pos.opt.top">頂部中央</option>
+                <option value="bottom" data-i18n="watermark.pos.opt.bottom">底部中央</option>
+                <option value="bottom-right" data-i18n="watermark.pos.opt.bottomRight">右下</option>
+                <option value="top-left" data-i18n="watermark.pos.opt.topLeft">左上</option>
               </select>
             </div>
             <div>
-              <label class="text-xs block mb-1 text-zinc-400">透明度</label>
+              <label class="text-xs block mb-1 text-zinc-400" data-i18n="watermark.opacity.label">透明度</label>
               <div class="flex items-center gap-3">
                 <input id="watermark-opacity" type="range" min="10" max="95" step="5" value="75" class="flex-1 accent-[#e82127]">
                 <span id="opacity-val" class="font-mono text-xs w-8">75%</span>
               </div>
             </div>
           </div>
-          <div class="mt-3 text-xs text-zinc-500">匯出時會即時把目前播放的多鏡頭畫面合成單一影片，並疊加上方設定的浮水印與時間戳記。</div>
+          <div class="mt-3 text-xs text-zinc-500" data-i18n="watermark.export.note">匯出時會即時把目前播放的多鏡頭畫面合成單一影片，並疊加上方設定的浮水印與時間戳記。</div>
         </div>
       </details>
 
@@ -689,12 +693,12 @@
       <details class="shrink-0 border border-zinc-800 bg-zinc-900 rounded-3xl text-sm">
         <summary class="cursor-pointer select-none px-5 py-3 font-medium flex items-center gap-2">
           <i class="fa-solid fa-gauge-high"></i>
-          <span>遙測顯示設定</span>
-          <span class="text-xs text-zinc-500 font-normal ml-1">— 選擇要疊在影片上的資訊</span>
+          <span data-i18n="telem.settings.title">遙測顯示設定</span>
+          <span class="text-xs text-zinc-500 font-normal ml-1" data-i18n="telem.settings.hint">— 選擇要疊在影片上的資訊</span>
         </summary>
         <div class="px-5 pb-5">
           <div id="telem-fields" class="grid grid-cols-2 sm:grid-cols-3 gap-2"><!-- toggles injected --></div>
-          <div class="mt-3 text-[11px] text-zinc-500">需先按播放控制列的「解析遙測」。GPS 路徑圖、G 值、羅盤等需該片段有對應資料。設定會記住。</div>
+          <div class="mt-3 text-[11px] text-zinc-500" data-i18n="telem.settings.footnote">需先按播放控制列的「解析遙測」。GPS 路徑圖、G 值、羅盤等需該片段有對應資料。設定會記住。</div>
         </div>
       </details>
 
@@ -706,36 +710,36 @@
   <div id="export-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
     <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-6 w-full max-w-md">
       <div class="flex items-center justify-between mb-4">
-        <div class="font-semibold text-lg flex items-center gap-2"><i class="fa-solid fa-download"></i> 匯出影片</div>
+        <div class="font-semibold text-lg flex items-center gap-2"><i class="fa-solid fa-download"></i> <span data-i18n="export.title">匯出影片</span></div>
         <button onclick="closeExportModal()" class="text-zinc-500 hover:text-zinc-200"><i class="fa-solid fa-xmark"></i></button>
       </div>
 
-      <div class="text-xs text-zinc-400 mb-2">選擇要匯出的鏡頭：</div>
+      <div class="text-xs text-zinc-400 mb-2" data-i18n="export.cams.label">選擇要匯出的鏡頭：</div>
       <div id="export-cam-list" class="grid grid-cols-2 gap-2 mb-3"><!-- camera checkboxes injected --></div>
 
       <label class="flex items-start gap-2 text-sm mb-3 cursor-pointer select-none">
         <input type="checkbox" id="export-composite" checked class="accent-[#e82127] mt-0.5">
-        <span>合成為單一畫面<span class="block text-[11px] text-zinc-500">勾選：多鏡頭合併成一個畫面。<b>取消勾選</b>：每個鏡頭<b>分別匯出</b>成各自的檔案（原生解析度）。</span></span>
+        <span data-i18n-html="export.composite.label">合成為單一畫面<span class="block text-[11px] text-zinc-500">勾選：多鏡頭合併成一個畫面。<b>取消勾選</b>：每個鏡頭<b>分別匯出</b>成各自的檔案（原生解析度）。</span></span>
       </label>
 
 
       <div id="export-segrange-wrap" class="hidden mb-4">
         <div class="flex justify-between text-xs text-zinc-400 mb-1">
-          <span>輸出時間範圍（<span id="export-merge-count">0</span> 段連續，自動串成一支）</span>
-          <span class="font-mono text-zinc-300">選取 <span id="export-range-len" class="text-zinc-100">0:00</span> / 總長 <span id="export-total-label">0:00</span></span>
+          <span data-i18n-html="export.segrange.label">輸出時間範圍（<span id="export-merge-count">0</span> 段連續，自動串成一支）</span>
+          <span class="font-mono text-zinc-300" data-i18n-html="export.segrange.summary">選取 <span id="export-range-len" class="text-zinc-100">0:00</span> / 總長 <span id="export-total-label">0:00</span></span>
         </div>
         <div class="flex items-center gap-2 text-sm flex-wrap">
-          <span class="text-xs text-zinc-400">起</span>
+          <span class="text-xs text-zinc-400" data-i18n="export.segrange.start">起</span>
           <input type="text" id="export-time-start" value="0:00" oninput="onExportRangeInput()" class="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-sm font-mono text-zinc-200 text-center">
-          <span class="text-xs text-zinc-400 ml-1">迄</span>
+          <span class="text-xs text-zinc-400 ml-1" data-i18n="export.segrange.end">迄</span>
           <input type="text" id="export-time-end" value="0:00" oninput="onExportRangeInput()" class="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-sm font-mono text-zinc-200 text-center">
         </div>
-        <div class="text-[11px] text-zinc-500 mt-1">已帶入你在播放器標記的 起點／終點，可直接微調（格式「分:秒」，例如 2:30）。</div>
+        <div class="text-[11px] text-zinc-500 mt-1" data-i18n="export.segrange.hint">已帶入你在播放器標記的 起點／終點，可直接微調（格式「分:秒」，例如 2:30）。</div>
       </div>
 
       <div id="export-trim-wrap" class="mb-4">
         <div class="flex justify-between text-xs text-zinc-400 mb-1">
-          <span>剪輯範圍（拉桿選起訖）</span>
+          <span data-i18n="export.trim.label">剪輯範圍（拉桿選起訖）</span>
           <span class="font-mono text-zinc-300"><span id="export-start-label">0:00</span> → <span id="export-end-label">0:00</span></span>
         </div>
         <input type="range" id="export-start" min="0" max="100" step="0.1" value="0" oninput="onExportTrimInput('start')" class="w-full accent-[#e82127]">
@@ -743,18 +747,18 @@
       </div>
 
       <div class="flex items-center gap-3 mb-5">
-        <label class="text-xs text-zinc-400">畫質</label>
+        <label class="text-xs text-zinc-400" data-i18n="export.quality.label">畫質</label>
         <select id="export-quality" class="bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-1.5 text-sm focus:outline-none">
-          <option value="max" selected>最高畫質（原生解析度 / 較慢、檔案大）</option>
-          <option value="high">高畫質（1080p）</option>
-          <option value="std">標準（720p / 檔案小）</option>
+          <option value="max" selected data-i18n="export.quality.opt.max">最高畫質（原生解析度 / 較慢、檔案大）</option>
+          <option value="high" data-i18n="export.quality.opt.high">高畫質（1080p）</option>
+          <option value="std" data-i18n="export.quality.opt.std">標準（720p / 檔案小）</option>
         </select>
         <span id="export-format-note" class="text-[11px] text-zinc-500 ml-auto"></span>
       </div>
 
       <div class="flex justify-end gap-2">
-        <button onclick="closeExportModal()" class="px-4 py-2 text-sm border border-zinc-700 rounded-xl hover:bg-zinc-800">取消</button>
-        <button onclick="startExport()" class="px-5 py-2 text-sm font-semibold bg-[#e82127] hover:bg-red-700 rounded-xl flex items-center gap-2"><i class="fa-solid fa-circle-play"></i> 開始匯出</button>
+        <button onclick="closeExportModal()" class="px-4 py-2 text-sm border border-zinc-700 rounded-xl hover:bg-zinc-800" data-i18n="export.cancel">取消</button>
+        <button onclick="startExport()" class="px-5 py-2 text-sm font-semibold bg-[#e82127] hover:bg-red-700 rounded-xl flex items-center gap-2"><i class="fa-solid fa-circle-play"></i> <span data-i18n="export.start">開始匯出</span></button>
       </div>
     </div>
   </div>
@@ -762,19 +766,19 @@
   <!-- Export progress overlay -->
   <div id="export-progress" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
     <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-7 w-full max-w-sm text-center">
-      <div class="text-sm text-zinc-300 mb-1" id="export-progress-title">匯出中…</div>
+      <div class="text-sm text-zinc-300 mb-1" id="export-progress-title" data-i18n="export.progress.title">匯出中…</div>
       <div class="text-4xl font-bold tabular-nums mb-4"><span id="export-progress-pct">0</span><span class="text-lg text-zinc-500">%</span></div>
       <div class="h-2 bg-zinc-800 rounded-full overflow-hidden mb-4">
         <div id="export-progress-bar" class="h-full bg-[#e82127]" style="width:0%; transition: width .15s ease;"></div>
       </div>
-      <div class="text-[11px] text-zinc-500 mb-3">切換分頁會自動暫停，回來後繼續。</div>
-      <button onclick="cancelExport()" class="px-4 py-1.5 text-sm border border-zinc-700 rounded-xl hover:bg-zinc-800">取消 (Esc)</button>
+      <div class="text-[11px] text-zinc-500 mb-3" data-i18n="export.progress.note">切換分頁會自動暫停，回來後繼續。</div>
+      <button onclick="cancelExport()" class="px-4 py-1.5 text-sm border border-zinc-700 rounded-xl hover:bg-zinc-800" data-i18n="export.progress.cancel">取消 (Esc)</button>
     </div>
   </div>
 
   <footer class="shrink-0 text-center text-[11px] text-zinc-600 py-2 border-t border-zinc-900">
-    完全離線運作 • 100% 本地處理 •
-    <a href="https://aaronfei.github.io/tesla-record-viewer/" target="_blank" class="underline hover:text-zinc-400">線上 Demo</a>
+    <span data-i18n="footer.tagline">完全離線運作 • 100% 本地處理 •</span>
+    <a href="https://aaronfei.github.io/tesla-record-viewer/" target="_blank" class="underline hover:text-zinc-400" data-i18n="footer.demo">線上 Demo</a>
   </footer>
 
   <!--
@@ -903,6 +907,54 @@
   </script>
 
   <script>
+    // ===== i18n (ZH default / EN), persisted. t(key,...args) interpolates {0},{1}; static markup uses
+    // data-i18n / data-i18n-html / data-i18n-title / data-i18n-ph attributes applied by applyLang(). =====
+    const I18N = { zh: {"topbar.encNotice.btn.title":"Tesla 2026.20 加密影片說明 / 關閉加密步驟","topbar.encNotice.btn":"加密影片?","topbar.badge.local":"100% 本地處理","topbar.about":"關於","topbar.lang.title":"Language / 語言","notice.enc.title":"影片打不開？Tesla 2026.20 起「預設加密」行車記錄影片","notice.enc.body":"新版車輛會把影片存成 <code class=\"px-1 rounded bg-black/40\">EncryptedClips</code>（加密資料），一般播放器與本檢視器都<b>無法直接播放</b> —— 這不是 codec / H.265 問題。","notice.enc.step.decrypt":"<b>解密已錄好的影片：</b>把加密 <code class=\"px-1 rounded bg-black/40\">.mp4</code> 複製到電腦 → 開 <a href=\"https://dashcam.tesla.com\" target=\"_blank\" rel=\"noopener\" class=\"underline font-medium text-amber-200 hover:text-white\">dashcam.tesla.com</a> → 用 Tesla 帳號登入 → 上傳後在你瀏覽器<b>本機解密下載</b>（檔案不會上傳給 Tesla）。解密後的 MP4 即可丟進本檢視器播放。","notice.enc.step.disable":"<b>不想再加密（之後的新影片）：</b>在車機 <b>「控制 Controls」→「安全 Safety」→ 關閉「加密行車記錄影片 Encrypt Dashcam Recordings」</b>。<span class=\"text-amber-300/70\">註：此設定只影響之後新錄的影片；已加密的舊檔仍需用上面的工具解密。</span>","notice.enc.cta":"前往 Tesla 官方解密工具","notice.enc.dismiss.title":"關閉提示","footer.tagline":"完全離線運作 • 100% 本地處理 •","footer.demo":"線上 Demo","info.dialog":"Tesla Record Viewer\n\n這是一個純前端應用程式，專為在 GitHub Pages 上執行而設計。\n\n• 選擇資料夾後，瀏覽器會在本機讀取影片，絕不會上傳任何內容。\n• 多鏡頭同步播放使用標準 HTML5 Video API。\n• 匯出帶浮水印的影片使用 Canvas + MediaRecorder，在你的電腦上即時合成。\n• 推薦使用 Chrome 或 Edge 以獲得完整的 File System Access API 體驗（可直接選取整個資料夾並保留權限）。\n\n已知限制：\n- H.265 (HEVC) 影片在部分作業系統需要額外解碼器支援。\n- 大量檔案時掃描需要一點時間。\n- 匯出優先使用 MP4 (H.264)，瀏覽器不支援時自動退回 WebM。\n\n開源貢獻歡迎！","sidebar.selectFolder":"選擇 TeslaCam 資料夾","sidebar.fallbackNote":"瀏覽器不支援進階資料夾 API，已切換為檔案選擇模式（建議使用 Chrome / Edge）","sidebar.events.title":"事件列表","filter.start.title":"起始日期","filter.end.title":"結束日期","filter.clear.title":"清除日期篩選","sidebar.continuousPlay":"連續播放（自動串接相鄰分段）","empty.noData.title":"尚未載入任何資料","empty.noData.body":"點擊上方「選擇 TeslaCam 資料夾」開始。可選整個 TeslaCam 資料夾，或 SentryClips / SavedClips 子資料夾。","sidebar.localOnly":"資料永遠留在本地，絕不上傳","sidebar.collapse.title":"收合檔案列表","player.placeholder.title":"從左側選擇一個事件開始播放","player.placeholder.body":"多鏡頭同步播放 · 時間戳記浮水印 · 可匯出","status.scanning":"正在掃描資料夾與子資料夾...","status.pleaseWait":"請稍候","status.processingFiles":"正在處理選擇的檔案...","status.fileCount":"{0} 個檔案","status.scanComplete":"掃描完成，共找到 {0} 個事件","status.videoCount":"{0} 個影片檔","selectFolder.opening":"正在開啟...","alert.folderAccessFailed":"無法存取資料夾：{0}\n\n請確認使用支援的瀏覽器 (Chrome / Edge 推薦)，並允許權限。","time.unknown":"未知","eventCount.filtered":"{0} / {1} 個事件","eventCount.total":"{0} 個事件","empty.noDateMatch.title":"此日期範圍沒有影片","empty.noDateMatch.body":"調整起始/結束日期，或按 ✕ 清除篩選。","list.row.cameraCount":"{0} 鏡頭","camera.front":"前鏡頭","camera.left_repeater":"左後視鏡","camera.right_repeater":"右後視鏡","camera.back":"後鏡頭","camera.left_pillar":"左 B 柱","camera.right_pillar":"右 B 柱","video.decodeFailed":"無法解碼 (可能是 H.265)","gap.minutes":"{0} 分鐘","gap.seconds":"{0} 秒","gap.note":"⏭ 行車記錄器影片不連續：此處原始錄影缺少約 {0}","session.header.cameras":"{0} 鏡頭","session.header.segment":" · 連續 {0}/{1} 段","session.header.gaps":" · ⚠ {0} 處不連續","player.title":"同步播放器","controls.play":"播放","controls.pause":"暫停","controls.view.grid":"六宮格","controls.view.main":"主畫面","controls.view.title":"切換檢視：主畫面 ↔ 六宮格（全部鏡頭）","controls.speed":"速度","controls.mark.in":"⟮ 起點","controls.mark.in.title":"標記匯出起點（目前位置）","controls.mark.out":"終點 ⟯","controls.mark.out.title":"標記匯出終點（目前位置）","controls.mark.clear.title":"清除標記","controls.telemetry.parse":"解析遙測","controls.telemetry.loading":"解析中…","controls.telemetry.loading.progress":"解析中… {0}/{1}","controls.telemetry.on":"遙測 ✓","controls.telemetry.off":"顯示遙測","controls.telemetry.none":"無 SEI 遙測","controls.telemetry.none.title":"此片段沒有 SEI 遙測（需未加密 H.264、韌體 2025.44.25+、HW3+、非停車）","controls.watermark.show":"顯示浮水印","controls.export":"匯出影片","hud.blinker.left.title":"左方向燈","hud.blinker.right.title":"右方向燈","hud.steer.alt":"方向盤","hud.steer.title":"方向盤","hud.brake":"煞車","hud.accel.title":"油門","hud.gforce.title":"加速度 G 值","hud.compass.title":"車頭朝向","hud.follow.title":"街道導航圖（點擊放大／縮小）","hud.map.title":"GPS 路徑圖（點擊放大／縮小）","hud.map.link":"Google 地圖 ↗","telem.settings.title":"遙測顯示設定","telem.settings.hint":"— 選擇要疊在影片上的資訊","telem.field.speed":"時速","telem.field.gear":"檔位","telem.field.blinkers":"方向燈","telem.field.steering":"方向盤","telem.field.brake":"煞車","telem.field.accel":"油門深度","telem.field.gforce":"G 值","telem.field.compass":"羅盤朝向","telem.field.map":"GPS 全局路徑圖","telem.field.mapfollow":"街道導航圖","telem.settings.footnote":"需先按播放控制列的「解析遙測」。GPS 路徑圖、G 值、羅盤等需該片段有對應資料。設定會記住。","export.throttle.burnin":"油門","watermark.section.title":"浮水印設定（預覽 + 匯出共用）","watermark.section.expand":"— 點此展開","watermark.mode.label":"浮水印模式","watermark.mode.opt.timestamp":"時間戳記（依影片時間即時顯示）","watermark.mode.opt.text":"自訂文字","watermark.mode.opt.both":"時間戳記 ＋ 自訂文字","watermark.mode.hint":"時間戳記 = 每段影片實際錄影起始時間 + 播放進度，自動計算並隨播放更新","watermark.text.label":"浮水印文字","watermark.text.default":"TeslaCam • 本地處理 • 僅供個人使用","watermark.pos.label":"位置","watermark.pos.opt.top":"頂部中央","watermark.pos.opt.bottom":"底部中央","watermark.pos.opt.bottomRight":"右下","watermark.pos.opt.topLeft":"左上","watermark.opacity.label":"透明度","watermark.export.note":"匯出時會即時把目前播放的多鏡頭畫面合成單一影片，並疊加上方設定的浮水印與時間戳記。","export.title":"匯出影片","export.cams.label":"選擇要匯出的鏡頭：","export.composite.label":"合成為單一畫面<span class=\"block text-[11px] text-zinc-500\">勾選：多鏡頭合併成一個畫面。<b>取消勾選</b>：每個鏡頭<b>分別匯出</b>成各自的檔案（原生解析度）。</span>","export.segrange.label":"輸出時間範圍（<span id=\"export-merge-count\">0</span> 段連續，自動串成一支）","export.segrange.summary":"選取 <span id=\"export-range-len\" class=\"text-zinc-100\">0:00</span> / 總長 <span id=\"export-total-label\">0:00</span>","export.segrange.start":"起","export.segrange.end":"迄","export.segrange.hint":"已帶入你在播放器標記的 起點／終點，可直接微調（格式「分:秒」，例如 2:30）。","export.trim.label":"剪輯範圍（拉桿選起訖）","export.quality.label":"畫質","export.quality.opt.max":"最高畫質（原生解析度 / 較慢、檔案大）","export.quality.opt.high":"高畫質（1080p）","export.quality.opt.std":"標準（720p / 檔案小）","export.cancel":"取消","export.start":"開始匯出","export.formatNote":"格式：{0}","export.progress.title":"匯出中…","export.progress.note":"切換分頁會自動暫停，回來後繼續。","export.progress.cancel":"取消 (Esc)","export.progress.preparing":"準備中…","export.progress.exporting":"匯出中…","export.progress.exporting.count":"匯出中… ({0}/{1})","export.progress.exporting.cam":"匯出中… ({0}/{1}) {2}","export.progress.parsingTelem":"解析遙測… {0}/{1} 段","export.progress.finishing":"完成中…","export.paused.bg":"已暫停（分頁切走）— 回到此分頁即繼續","alert.selectEventFirst":"請先選擇一個事件並載入影片","alert.selectCamera":"請至少勾選一個鏡頭","alert.endAfterStart":"結束時間需大於起始時間","status.exportCancelled":"已取消匯出。","status.exportDone":"匯出完成！檔案已下載。","status.exportDone.merged":"{0} 段合併","alert.mergeExportFailed":"合併匯出失敗：{0}","alert.exportFailed":"匯出失敗：{0}\n\n部分瀏覽器對 MediaRecorder + canvas 的支援有限，請用最新版 Chrome / Edge。"}, en: {"topbar.encNotice.btn.title":"Tesla 2026.20 encrypted-clip guide / how to turn off encryption","topbar.encNotice.btn":"Encrypted clip?","topbar.badge.local":"100% local processing","topbar.about":"About","topbar.lang.title":"Language / 語言","notice.enc.title":"Video won't open? Tesla 2026.20+ encrypts dashcam clips by default","notice.enc.body":"Newer vehicles save clips as <code class=\"px-1 rounded bg-black/40\">EncryptedClips</code> (encrypted data) that ordinary players and this viewer <b>can't play directly</b> — this is not a codec / H.265 issue.","notice.enc.step.decrypt":"<b>Decrypt clips you've already recorded:</b> copy the encrypted <code class=\"px-1 rounded bg-black/40\">.mp4</code> to your computer → open <a href=\"https://dashcam.tesla.com\" target=\"_blank\" rel=\"noopener\" class=\"underline font-medium text-amber-200 hover:text-white\">dashcam.tesla.com</a> → sign in with your Tesla account → after upload it's <b>decrypted and downloaded locally in your browser</b> (files are never uploaded to Tesla). The decrypted MP4 can then be dropped into this viewer.","notice.enc.step.disable":"<b>Stop encrypting future clips:</b> on the car screen go to <b>Controls → Safety → turn off \"Encrypt Dashcam Recordings\"</b>. <span class=\"text-amber-300/70\">Note: this only affects clips recorded afterward; already-encrypted files still need the tool above to decrypt.</span>","notice.enc.cta":"Open Tesla's official decryption tool","notice.enc.dismiss.title":"Dismiss","footer.tagline":"Runs fully offline • 100% local processing •","footer.demo":"Live Demo","info.dialog":"Tesla Record Viewer\n\nA fully client-side app, built to run on GitHub Pages.\n\n• After you pick a folder, the browser reads the videos locally — nothing is ever uploaded.\n• Multi-camera synced playback uses the standard HTML5 Video API.\n• Watermarked exports are composited in real time on your machine using Canvas + MediaRecorder.\n• Chrome or Edge is recommended for the full File System Access API experience (pick a whole folder directly and keep permissions).\n\nKnown limitations:\n- H.265 (HEVC) videos may need an extra decoder on some operating systems.\n- Scanning can take a moment with many files.\n- Export prefers MP4 (H.264) and falls back to WebM when the browser doesn't support it.\n\nOpen-source contributions welcome!","sidebar.selectFolder":"Select TeslaCam Folder","sidebar.fallbackNote":"Your browser doesn't support the advanced folder API; switched to file-picker mode (Chrome / Edge recommended)","sidebar.events.title":"Events","filter.start.title":"Start date","filter.end.title":"End date","filter.clear.title":"Clear date filter","sidebar.continuousPlay":"Continuous playback (auto-join adjacent segments)","empty.noData.title":"No data loaded yet","empty.noData.body":"Click \"Select TeslaCam Folder\" above to start. Pick the whole TeslaCam folder, or a SentryClips / SavedClips subfolder.","sidebar.localOnly":"Your data stays local — never uploaded","sidebar.collapse.title":"Collapse file list","player.placeholder.title":"Select an event on the left to start playing","player.placeholder.body":"Multi-camera synced playback · timestamp watermark · exportable","status.scanning":"Scanning folders and subfolders...","status.pleaseWait":"Please wait","status.processingFiles":"Processing selected files...","status.fileCount":"{0} files","status.scanComplete":"Scan complete — {0} events found","status.videoCount":"{0} video files","selectFolder.opening":"Opening...","alert.folderAccessFailed":"Can't access folder: {0}\n\nMake sure you're using a supported browser (Chrome / Edge recommended) and have granted permission.","time.unknown":"Unknown","eventCount.filtered":"{0} / {1} events","eventCount.total":"{0} events","empty.noDateMatch.title":"No videos in this date range","empty.noDateMatch.body":"Adjust the start/end dates, or click ✕ to clear the filter.","list.row.cameraCount":"{0} cameras","camera.front":"Front","camera.left_repeater":"Left Repeater","camera.right_repeater":"Right Repeater","camera.back":"Rear","camera.left_pillar":"Left Pillar","camera.right_pillar":"Right Pillar","video.decodeFailed":"Cannot decode (likely H.265)","gap.minutes":"{0} min","gap.seconds":"{0} sec","gap.note":"⏭ Dashcam footage gap: about {0} of source recording is missing here","session.header.cameras":"{0} cameras","session.header.segment":" · Clip {0}/{1}","session.header.gaps":" · ⚠ {0} gaps","player.title":"Synced Player","controls.play":"Play","controls.pause":"Pause","controls.view.grid":"Grid","controls.view.main":"Main","controls.view.title":"Toggle view: Main ↔ Grid (all cameras)","controls.speed":"Speed","controls.mark.in":"⟮ In","controls.mark.in.title":"Set export in-point (current position)","controls.mark.out":"Out ⟯","controls.mark.out.title":"Set export out-point (current position)","controls.mark.clear.title":"Clear marks","controls.telemetry.parse":"Parse Telemetry","controls.telemetry.loading":"Parsing…","controls.telemetry.loading.progress":"Parsing… {0}/{1}","controls.telemetry.on":"Telemetry ✓","controls.telemetry.off":"Show Telemetry","controls.telemetry.none":"No SEI Telemetry","controls.telemetry.none.title":"This clip has no SEI telemetry (requires unencrypted H.264, firmware 2025.44.25+, HW3+, not parked)","controls.watermark.show":"Show Watermark","controls.export":"Export Video","hud.blinker.left.title":"Left turn signal","hud.blinker.right.title":"Right turn signal","hud.steer.alt":"Steering wheel","hud.steer.title":"Steering wheel","hud.brake":"Brake","hud.accel.title":"Accelerator","hud.gforce.title":"G-force","hud.compass.title":"Heading","hud.follow.title":"Street map (click to zoom in/out)","hud.map.title":"GPS route map (click to zoom in/out)","hud.map.link":"Google Maps ↗","telem.settings.title":"Telemetry Display Settings","telem.settings.hint":"— choose which info to overlay on the video","telem.field.speed":"Speed","telem.field.gear":"Gear","telem.field.blinkers":"Turn Signals","telem.field.steering":"Steering","telem.field.brake":"Brake","telem.field.accel":"Accelerator","telem.field.gforce":"G-force","telem.field.compass":"Compass Heading","telem.field.map":"GPS Route Map","telem.field.mapfollow":"Street Map","telem.settings.footnote":"Press \"Parse Telemetry\" in the control bar first. The GPS route map, G-force, compass and similar require matching data in the clip. Settings are remembered.","export.throttle.burnin":"Accel","watermark.section.title":"Watermark settings (preview + export)","watermark.section.expand":"— click to expand","watermark.mode.label":"Watermark mode","watermark.mode.opt.timestamp":"Timestamp (live, follows video time)","watermark.mode.opt.text":"Custom text","watermark.mode.opt.both":"Timestamp + custom text","watermark.mode.hint":"Timestamp = each clip's actual recording start time + playback position, computed automatically and updated as it plays","watermark.text.label":"Watermark text","watermark.text.default":"TeslaCam • Processed locally • Personal use only","watermark.pos.label":"Position","watermark.pos.opt.top":"Top center","watermark.pos.opt.bottom":"Bottom center","watermark.pos.opt.bottomRight":"Bottom right","watermark.pos.opt.topLeft":"Top left","watermark.opacity.label":"Opacity","watermark.export.note":"On export, the multi-camera view you're playing is composited into a single video in real time, with the watermark and timestamp set above overlaid.","export.title":"Export video","export.cams.label":"Choose cameras to export:","export.composite.label":"Composite into one frame<span class=\"block text-[11px] text-zinc-500\">Checked: merge all cameras into a single frame. <b>Unchecked</b>: <b>export each camera</b> as its own file (native resolution).</span>","export.segrange.label":"Output time range (<span id=\"export-merge-count\">0</span> continuous segments, auto-joined into one)","export.segrange.summary":"Selected <span id=\"export-range-len\" class=\"text-zinc-100\">0:00</span> / total <span id=\"export-total-label\">0:00</span>","export.segrange.start":"From","export.segrange.end":"To","export.segrange.hint":"Pre-filled with the start/end marks you set in the player; adjust as needed (format \"min:sec\", e.g. 2:30).","export.trim.label":"Trim range (drag to set start/end)","export.quality.label":"Quality","export.quality.opt.max":"Maximum (native resolution / slower, large file)","export.quality.opt.high":"High (1080p)","export.quality.opt.std":"Standard (720p / small file)","export.cancel":"Cancel","export.start":"Start export","export.formatNote":"Format: {0}","export.progress.title":"Exporting…","export.progress.note":"Switching tabs auto-pauses; it resumes when you return.","export.progress.cancel":"Cancel (Esc)","export.progress.preparing":"Preparing…","export.progress.exporting":"Exporting…","export.progress.exporting.count":"Exporting… ({0}/{1})","export.progress.exporting.cam":"Exporting… ({0}/{1}) {2}","export.progress.parsingTelem":"Parsing telemetry… clip {0}/{1}","export.progress.finishing":"Finishing…","export.paused.bg":"Paused (tab switched) — return to this tab to resume","alert.selectEventFirst":"Select an event and load its videos first.","alert.selectCamera":"Select at least one camera.","alert.endAfterStart":"End time must be later than start time.","status.exportCancelled":"Export cancelled.","status.exportDone":"Export complete! File downloaded.","status.exportDone.merged":"{0} clips merged","alert.mergeExportFailed":"Merge export failed: {0}","alert.exportFailed":"Export failed: {0}\n\nSome browsers have limited MediaRecorder + canvas support; please use the latest Chrome / Edge."} };
+    let currentLang = (() => { try { return localStorage.getItem('trv_lang') === 'en' ? 'en' : 'zh'; } catch (e) { return 'zh'; } })();
+    function TR(key) { // translate + interpolate {0},{1}…  (named TR to avoid clashing with local `t` vars)
+      const dict = I18N[currentLang] || I18N.zh;
+      let s = dict[key] != null ? dict[key] : (I18N.zh[key] != null ? I18N.zh[key] : key);
+      for (let i = 1; i < arguments.length; i++) s = s.split('{' + (i - 1) + '}').join(arguments[i]);
+      return s;
+    }
+    function tx(key) { const d = I18N[currentLang]; return (d && d[key] != null) ? d[key] : null; } // translation or null (leave as-is)
+    function applyLang() {
+      try { document.documentElement.lang = currentLang === 'en' ? 'en' : 'zh-Hant'; } catch (e) {}
+      document.querySelectorAll('[data-i18n]').forEach(el => { const v = tx(el.getAttribute('data-i18n')); if (v != null) el.textContent = v; });
+      document.querySelectorAll('[data-i18n-html]').forEach(el => { const v = tx(el.getAttribute('data-i18n-html')); if (v != null) el.innerHTML = v; });
+      document.querySelectorAll('[data-i18n-title]').forEach(el => { const v = tx(el.getAttribute('data-i18n-title')); if (v != null) el.title = v; });
+      document.querySelectorAll('[data-i18n-ph]').forEach(el => { const v = tx(el.getAttribute('data-i18n-ph')); if (v != null) el.placeholder = v; });
+      // input default values: only swap when the field still holds a known default (don't clobber user edits)
+      document.querySelectorAll('[data-i18n-val]').forEach(el => {
+        const k = el.getAttribute('data-i18n-val'), v = tx(k);
+        if (v != null && (el.value === I18N.zh[k] || el.value === I18N.en[k] || el.value === '')) el.value = v;
+      });
+      // Re-render JS-driven dynamic labels so they follow the language.
+      try { if (typeof syncLangButton === 'function') syncLangButton(); } catch (e) {}
+      try { if (typeof onLangChanged === 'function') onLangChanged(); } catch (e) {}
+    }
+    function setLang(lang) {
+      currentLang = lang === 'en' ? 'en' : 'zh';
+      try { localStorage.setItem('trv_lang', currentLang); } catch (e) {}
+      applyLang();
+    }
+    function toggleLang() { setLang(currentLang === 'zh' ? 'en' : 'zh'); }
+    function syncLangButton() {
+      const l = document.getElementById('lang-label');
+      if (l) l.textContent = currentLang === 'zh' ? 'EN' : '中'; // shows the language you'd switch TO
+    }
+    // Re-render JS-driven dynamic labels when the language changes (these build text in code, not via
+    // data-i18n attributes). Each is guarded; they use t() once wired.
+    function onLangChanged() {
+      try { buildTelemSettingsUI(); } catch (e) {}
+      try { syncViewButton(); } catch (e) {}
+      try { updatePlayButton(); } catch (e) {}
+      try { if (events && events.length) renderEvents(); } catch (e) {}
+      try { if (session && session.length && currentEvent) updateSessionHeader(); } catch (e) {}
+      try { setTelemetryBtn(telemBtnState); } catch (e) {}
+      try { updateWatermarkVisibility(); } catch (e) {}
+    }
+
     // Tailwind script
     function initTailwind() {
       document.querySelectorAll('script').forEach(s => {
@@ -933,26 +985,19 @@
     // Supported camera names (case insensitive matching)
     // Grid layout (2 columns): row1 = 前/後, row2 = 左後視鏡/右後視鏡, row3 = 左B柱/右B柱
     const CAMERA_ORDER = ['front', 'back', 'rear', 'left_repeater', 'right_repeater', 'left_pillar', 'right_pillar'];
-    const CAMERA_LABELS = {
-      'front': '前鏡頭',
-      'left_repeater': '左後視鏡',
-      'right_repeater': '右後視鏡',
-      'back': '後鏡頭',
-      'rear': '後鏡頭',
-      'left_pillar': '左 B 柱',
-      'right_pillar': '右 B 柱'
-    };
+    // Camera display name in the current language (falls back to the raw cam id).
+    function camLabel(cam) { const v = I18N[currentLang] && I18N[currentLang]['camera.' + cam]; return v != null ? v : cam; }
 
     const EMPTY_STATE_DEFAULT = `
       <div class="mx-auto w-12 h-12 flex items-center justify-center rounded-2xl bg-zinc-900 mb-4">
         <i class="fa-solid fa-folder-open text-3xl text-zinc-600"></i>
       </div>
-      <div class="text-base font-medium mb-1">尚未載入任何資料</div>
-      <p class="text-xs text-zinc-500">點擊上方「選擇 TeslaCam 資料夾」開始。可選整個 TeslaCam 資料夾，或 SentryClips / SavedClips 子資料夾。</p>`;
+      <div class="text-base font-medium mb-1" data-i18n="empty.noData.title">尚未載入任何資料</div>
+      <p class="text-xs text-zinc-500" data-i18n="empty.noData.body">點擊上方「選擇 TeslaCam 資料夾」開始。可選整個 TeslaCam 資料夾，或 SentryClips / SavedClips 子資料夾。</p>`;
 
     function formatTimestamp(ts) {
       // ts like 2024-06-10_14-22-33
-      if (!ts) return '未知';
+      if (!ts) return TR('time.unknown');
       const [date, time] = ts.split('_');
       if (!date || !time) return ts;
       return `${date} ${time.replace(/-/g, ':')}`;
@@ -995,7 +1040,7 @@
     async function selectFolder() {
       const btnText = document.getElementById('select-btn-text');
       const originalText = btnText.textContent;
-      btnText.textContent = '正在開啟...';
+      btnText.textContent = TR('selectFolder.opening');
       
       try {
         // Prefer File System Access API
@@ -1013,7 +1058,7 @@
       } catch (err) {
         if (err.name !== 'AbortError') {
           console.error(err);
-          alert('無法存取資料夾：' + err.message + '\n\n請確認使用支援的瀏覽器 (Chrome / Edge 推薦)，並允許權限。');
+          alert(TR('alert.folderAccessFailed', err.message));
         }
       } finally {
         btnText.textContent = originalText;
@@ -1046,7 +1091,7 @@
     
     // Process using File System Access API (best path)
     async function processDirectoryHandle(handle, depth = 0) {
-      updateStatus('正在掃描資料夾與子資料夾...', '請稍候');
+      updateStatus(TR('status.scanning'), TR('status.pleaseWait'));
       
       const fileHandles = [];
       await walkDirectory(handle, fileHandles);
@@ -1071,7 +1116,7 @@
     
     // Fallback processor (File objects)
     async function processFallbackFiles(files) {
-      updateStatus('正在處理選擇的檔案...', files.length + ' 個檔案');
+      updateStatus(TR('status.processingFiles'), TR('status.fileCount', files.length));
       
       const fileHandles = files
         .filter(f => f.name.toLowerCase().endsWith('.mp4'))
@@ -1143,7 +1188,7 @@
       events = Object.values(groups).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
       
       renderEvents();
-      updateStatus(`掃描完成，共找到 ${events.length} 個事件`, `${fileEntries.length} 個影片檔`);
+      updateStatus(TR('status.scanComplete', events.length), TR('status.videoCount', fileEntries.length));
       
       // Auto select first event if exists
       if (events.length > 0) {
@@ -1179,7 +1224,7 @@
       emptyEl.style.display = 'none';
 
       if (events.length === 0) {
-        emptyEl.innerHTML = EMPTY_STATE_DEFAULT;
+        emptyEl.innerHTML = EMPTY_STATE_DEFAULT; applyLang();
         emptyEl.style.display = 'block';
         document.getElementById('event-count').textContent = '';
         return;
@@ -1196,11 +1241,11 @@
 
       const filtering = !!(start || end);
       document.getElementById('event-count').textContent =
-        filtering ? `${shown.length} / ${events.length} 個事件` : `${events.length} 個事件`;
+        filtering ? TR('eventCount.filtered', shown.length, events.length) : TR('eventCount.total', events.length);
 
       if (shown.length === 0) {
-        emptyEl.innerHTML = `<div class="text-base font-medium mb-1">此日期範圍沒有影片</div>
-          <p class="text-xs text-zinc-500">調整起始/結束日期，或按 ✕ 清除篩選。</p>`;
+        emptyEl.innerHTML = `<div class="text-base font-medium mb-1">${TR('empty.noDateMatch.title')}</div>
+          <p class="text-xs text-zinc-500">${TR('empty.noDateMatch.body')}</p>`;
         emptyEl.style.display = 'block';
         return;
       }
@@ -1245,14 +1290,14 @@
           row.className = 'event-row';
           
           const camBadges = cameras.map(c => {
-            const label = CAMERA_LABELS[c] || c;
+            const label = camLabel(c);
             return `<span class="text-[10px] px-1 py-px bg-zinc-800 text-zinc-400 rounded">${label}</span>`;
           }).join('');
           
           row.innerHTML = `
             <div class="event-row-time">${ev.displayTime}</div>
             <div class="event-row-badges">${camBadges}</div>
-            <div class="event-row-meta">${camCount} 鏡頭</div>
+            <div class="event-row-meta">${TR('list.row.cameraCount', camCount)}</div>
           `;
           
           row.onclick = () => selectEvent(ev, row);
@@ -1304,8 +1349,8 @@
         t.style.cssText = 'position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:30;background:rgba(180,83,9,0.94);color:#fff;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,0.45);pointer-events:none;opacity:0;transition:opacity .25s;white-space:nowrap;';
         host.appendChild(t);
       }
-      const g = gapSec >= 90 ? `${(gapSec / 60).toFixed(1)} 分鐘` : `${Math.round(gapSec)} 秒`;
-      t.textContent = `⏭ 行車記錄器影片不連續：此處原始錄影缺少約 ${g}`;
+      const g = gapSec >= 90 ? TR('gap.minutes', (gapSec / 60).toFixed(1)) : TR('gap.seconds', Math.round(gapSec));
+      t.textContent = TR('gap.note', g);
       t.style.opacity = '1';
       if (t._timer) clearTimeout(t._timer);
       t._timer = setTimeout(() => { t.style.opacity = '0'; }, 3000);
@@ -1340,11 +1385,11 @@
 
     function updateSessionHeader() {
       const ev = session[sessionIdx];
-      let txt = `${ev.displayTime} · ${Object.keys(ev.clips).length} 鏡頭`;
+      let txt = ev.displayTime + ' · ' + TR('session.header.cameras', Object.keys(ev.clips).length);
       if (session.length > 1) {
-        txt += ` · 連續 ${sessionIdx + 1}/${session.length} 段`;
+        txt += TR('session.header.segment', sessionIdx + 1, session.length);
         const ngaps = (sessionGaps || []).filter(g => g >= 1.5).length;
-        if (ngaps > 0) txt += ` · ⚠ ${ngaps} 處不連續`;
+        if (ngaps > 0) txt += TR('session.header.gaps', ngaps);
       }
       document.getElementById('current-event-name').textContent = txt;
     }
@@ -1444,7 +1489,7 @@
         const wrapper = document.createElement('div');
         wrapper.className = 'video-wrapper';
         
-        const label = CAMERA_LABELS[cam] || cam;
+        const label = camLabel(cam);
         
         wrapper.innerHTML = `
           <div class="video-container border border-zinc-700">
@@ -1465,7 +1510,7 @@
           console.error('Video load/play error for', cam, videoEl.error);
           const badge = document.createElement('div');
           badge.className = 'absolute bottom-1 right-1 text-[9px] px-1.5 py-0.5 bg-red-900/80 text-red-300 rounded';
-          badge.textContent = '無法解碼 (可能是 H.265)';
+          badge.textContent = TR('video.decodeFailed');
           wrapper.querySelector('.video-container').appendChild(badge);
         });
         
@@ -1573,7 +1618,7 @@
         const url = URL.createObjectURL(file);
         const wrapper = document.createElement('div');
         wrapper.className = 'video-wrapper';
-        const label = CAMERA_LABELS[cam] || cam;
+        const label = camLabel(cam);
         wrapper.innerHTML = `
           <div class="video-container border border-zinc-700">
             <video playsinline preload="auto" muted></video>
@@ -1596,7 +1641,7 @@
         videoEl.addEventListener('error', () => {
           const badge = document.createElement('div');
           badge.className = 'absolute bottom-1 right-1 text-[9px] px-1.5 py-0.5 bg-red-900/80 text-red-300 rounded';
-          badge.textContent = '無法解碼 (可能是 H.265)';
+          badge.textContent = TR('video.decodeFailed');
           wrapper.querySelector('.video-container').appendChild(badge);
         });
         videoEl.addEventListener('play', () => { if (videoEl !== masterVideo) syncToMaster(); });
@@ -1856,7 +1901,7 @@
     }
     function syncViewButton() {
       const icon = document.getElementById('view-icon'), label = document.getElementById('view-label');
-      if (label) label.textContent = viewMode === 'grid' ? '主畫面' : '六宮格'; // the action the button performs
+      if (label) label.textContent = viewMode === 'grid' ? TR('controls.view.main') : TR('controls.view.grid'); // the action the button performs
       if (icon) { icon.classList.toggle('fa-table-cells', viewMode !== 'grid'); icon.classList.toggle('fa-square', viewMode === 'grid'); }
     }
     // Clicking a camera: in grid view → switch to spotlight focused on it; in spotlight → promote it.
@@ -2090,11 +2135,11 @@
       if (isPlaying) {
         icon.classList.remove('fa-play');
         icon.classList.add('fa-pause');
-        text.textContent = '暫停';
+        text.textContent = TR('controls.pause');
       } else {
         icon.classList.remove('fa-pause');
         icon.classList.add('fa-play');
-        text.textContent = '播放';
+        text.textContent = TR('controls.play');
       }
     }
     
@@ -2296,7 +2341,7 @@ message SeiMetadata {
       box.innerHTML = TELEM_FIELDS.map(f => `
         <label class="flex items-center gap-2 text-sm px-2.5 py-1.5 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer">
           <input type="checkbox" class="telem-field accent-[#e82127]" value="${f.key}" ${telemShow[f.key] ? 'checked' : ''}>
-          <span>${f.label}</span>
+          <span>${TR('telem.field.' + f.key)}</span>
         </label>`).join('');
       box.querySelectorAll('.telem-field').forEach(cb => cb.addEventListener('change', () => {
         telemShow[cb.value] = cb.checked;
@@ -2572,7 +2617,9 @@ message SeiMetadata {
       return null;
     }
 
+    let telemBtnState = 'idle'; // remembered so the label can re-render on language change
     function setTelemetryBtn(state) {
+      telemBtnState = state;
       const btn = document.getElementById('telemetry-btn');
       const label = document.getElementById('telemetry-label');
       const icon = document.getElementById('telemetry-icon');
@@ -2580,11 +2627,11 @@ message SeiMetadata {
       btn.disabled = (state === 'loading');
       btn.classList.remove('bg-emerald-600', 'border-emerald-500', 'text-white');
       if (icon) icon.className = 'fa-solid fa-gauge-high';
-      if (state === 'idle') label.textContent = '解析遙測';
-      else if (state === 'loading') { if (icon) icon.className = 'fa-solid fa-spinner fa-spin'; label.textContent = '解析中…'; }
-      else if (state === 'on') { btn.classList.add('bg-emerald-600', 'border-emerald-500', 'text-white'); label.textContent = '遙測 ✓'; }
-      else if (state === 'off') label.textContent = '顯示遙測';
-      else if (state === 'none') { if (icon) icon.className = 'fa-solid fa-circle-info'; label.textContent = '無 SEI 遙測'; btn.title = '此片段沒有 SEI 遙測（需未加密 H.264、韌體 2025.44.25+、HW3+、非停車）'; }
+      if (state === 'idle') label.textContent = TR('controls.telemetry.parse');
+      else if (state === 'loading') { if (icon) icon.className = 'fa-solid fa-spinner fa-spin'; label.textContent = TR('controls.telemetry.loading'); }
+      else if (state === 'on') { btn.classList.add('bg-emerald-600', 'border-emerald-500', 'text-white'); label.textContent = TR('controls.telemetry.on'); }
+      else if (state === 'off') label.textContent = TR('controls.telemetry.off');
+      else if (state === 'none') { if (icon) icon.className = 'fa-solid fa-circle-info'; label.textContent = TR('controls.telemetry.none'); btn.title = TR('controls.telemetry.none.title'); }
     }
 
     function onTelemetryBtn() {
@@ -2762,13 +2809,13 @@ message SeiMetadata {
         try { if (exportRecorder && exportRecorder.state === 'recording') exportRecorder.pause(); } catch (e) {}
         exportVideoEls.forEach(v => { try { v.pause(); } catch (e) {} });
         if (exportSegControl) exportSegControl.onPause();
-        setExportProgress(null, '已暫停（分頁切走）— 回到此分頁即繼續');
+        setExportProgress(null, TR('export.paused.bg'));
       } else {
         exportPaused = false;
         try { if (exportRecorder && exportRecorder.state === 'paused') exportRecorder.resume(); } catch (e) {}
         exportVideoEls.forEach(v => { try { v.play().catch(() => {}); } catch (e) {} });
         if (exportSegControl) exportSegControl.onResume();
-        setExportProgress(null, '匯出中…');
+        setExportProgress(null, TR('export.progress.exporting'));
       }
     });
 
@@ -2789,17 +2836,17 @@ message SeiMetadata {
     }
 
     function openExportModal() {
-      if (!currentEvent || Object.keys(videos).length === 0) { alert('請先選擇一個事件並載入影片'); return; }
+      if (!currentEvent || Object.keys(videos).length === 0) { alert(TR('alert.selectEventFirst')); return; }
       if (isExporting) return;
       const list = document.getElementById('export-cam-list');
       const cams = Object.keys(videos).sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
       list.innerHTML = cams.map(c => `
         <label class="flex items-center gap-2 text-sm px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:border-zinc-600">
           <input type="checkbox" class="export-cam accent-[#e82127]" value="${c}" checked>
-          <span>${CAMERA_LABELS[c] || c}</span>
+          <span>${camLabel(c)}</span>
         </label>`).join('');
       const fmt = pickExportFormat();
-      document.getElementById('export-format-note').textContent = '格式：' + fmt.label;
+      document.getElementById('export-format-note').textContent = TR('export.formatNote', fmt.label);
 
       // Session (multi-segment continuous) → a single time-range box that always merges the
       // chosen span into one clip. Single clip → trim sliders. The range comes from the
@@ -2866,7 +2913,7 @@ message SeiMetadata {
 
     function startExport() {
       const checked = [...document.querySelectorAll('.export-cam:checked')].map(c => c.value);
-      if (!checked.length) { alert('請至少勾選一個鏡頭'); return; }
+      if (!checked.length) { alert(TR('alert.selectCamera')); return; }
       const quality = document.getElementById('export-quality').value;
       const composite = document.getElementById('export-composite').checked;
       const startSec = +document.getElementById('export-start').value;
@@ -2876,7 +2923,7 @@ message SeiMetadata {
       if (mergeSession) {
         rangeStart = parseTimeInput(document.getElementById('export-time-start').value);
         rangeEnd = parseTimeInput(document.getElementById('export-time-end').value);
-        if (rangeEnd <= rangeStart) { alert('結束時間需大於起始時間'); return; }
+        if (rangeEnd <= rangeStart) { alert(TR('alert.endAfterStart')); return; }
       }
       closeExportModal();
       runExport({ cameras: checked, quality, composite, startSec, endSec, mergeSession, rangeStart, rangeEnd });
@@ -3019,7 +3066,7 @@ message SeiMetadata {
           else if (s.k === 'gear') { ctx.textAlign = 'left'; drawPill(ctx, x, cy, gear, '#ffffff', '#111', S); }
           else if (s.k === 'ap') { ctx.textAlign = 'left'; drawPill(ctx, x, cy, ap, '#2563eb', '#fff', S); }
           else if (s.k === 'brake') { ctx.textAlign = 'left'; drawPill(ctx, x, cy, '煞車', '#dc2626', '#fff', S); }
-          else if (s.k === 'accel') { const bw = s.w, bh = 8 * S; ctx.fillStyle = '#27272a'; ctx.beginPath(); ctx.roundRect(x, cy - bh / 2, bw, bh, bh / 2); ctx.fill(); ctx.fillStyle = '#22c55e'; ctx.beginPath(); ctx.roundRect(x, cy - bh / 2, bw * accelFrac(sei), bh, bh / 2); ctx.fill(); ctx.fillStyle = '#64748b'; ctx.font = `500 ${Math.round(10 * S)}px system-ui, sans-serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillText('油門', x, cy - 9 * S); ctx.textBaseline = 'middle'; }
+          else if (s.k === 'accel') { const bw = s.w, bh = 8 * S; ctx.fillStyle = '#27272a'; ctx.beginPath(); ctx.roundRect(x, cy - bh / 2, bw, bh, bh / 2); ctx.fill(); ctx.fillStyle = '#22c55e'; ctx.beginPath(); ctx.roundRect(x, cy - bh / 2, bw * accelFrac(sei), bh, bh / 2); ctx.fill(); ctx.fillStyle = '#64748b'; ctx.font = `500 ${Math.round(10 * S)}px system-ui, sans-serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillText(TR('export.throttle.burnin'), x, cy - 9 * S); ctx.textBaseline = 'middle'; }
           else if (s.k === 'g') { drawGBall(ctx, c, cy, 22 * S, sei.linearAccelerationMps2X || 0, sei.linearAccelerationMps2Y || 0, S); }
           else if (s.k === 'c') { drawCompass(ctx, c, cy, 22 * S, sei.headingDeg || 0, S); }
           x += s.w + G;
@@ -3097,7 +3144,7 @@ message SeiMetadata {
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         ctx.font = `600 ${Math.round(15 * S)}px system-ui, sans-serif`;
         layout.forEach(([cam, x, y, w, h]) => {
-          const label = CAMERA_LABELS[cam] || cam;
+          const label = camLabel(cam);
           const lx = x + 12 * S, ly = y + 16 * S + (y < 1 ? topShift : 0);
           const tw = ctx.measureText(label).width;
           ctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -3193,7 +3240,7 @@ message SeiMetadata {
 
       isExporting = true; exportCancel = false;
       setLeftPaneLocked(true);
-      setExportProgress(0, '準備中…');
+      setExportProgress(0, TR('export.progress.preparing'));
       document.getElementById('export-progress').classList.remove('hidden');
 
       const savedTelemetry = telemetry, savedEnabled = telemetryEnabled;
@@ -3212,7 +3259,7 @@ message SeiMetadata {
           if (savedTelemetry && savedTelemetry.segDur && savedTelemetry.segDur.length === segs.length) {
             mergeTelem = savedTelemetry;
           } else {
-            mergeTelem = await parseSessionTelemetry(segs, tsBaseCam, (i, n) => setExportProgress(0, `解析遙測… ${i + 1}/${n} 段`));
+            mergeTelem = await parseSessionTelemetry(segs, tsBaseCam, (i, n) => setExportProgress(0, TR('export.progress.parsingTelem', i + 1, n)));
           }
         }
         telemetry = mergeTelem; telemetryEnabled = !!mergeTelem;
@@ -3347,7 +3394,7 @@ message SeiMetadata {
                 drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, wm, segTsBase, tsBaseCam, goff + refT);
                 if (supportsManual && vtrack.requestFrame) vtrack.requestFrame();
               }
-              setExportProgress(Math.min(99, Math.round(((cumStart + refT - rangeStart) / recordedTotal) * 100)), `匯出中… (${si + 1}/${segs.length})`);
+              setExportProgress(Math.min(99, Math.round(((cumStart + refT - rangeStart) / recordedTotal) * 100)), TR('export.progress.exporting.count', si + 1, segs.length));
               if (Math.abs(refT - lastT) < 1e-3) { if (++stalls === 30 && ref && ref.paused) ref.play().catch(() => {}); }
               else { stalls = 0; lastT = refT; }
               if ((ref && ref.ended) || refT >= localEnd - 0.04) { endSeg(); return; }
@@ -3361,15 +3408,15 @@ message SeiMetadata {
           urls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
         }
 
-        setExportProgress(100, '完成中…');
+        setExportProgress(100, TR('export.progress.finishing'));
         if (recorder) { try { recorder.stop(); } catch (e) {} await donePromise; }
 
-        if (exportCancel) updateStatus('已取消匯出。', '');
-        else updateStatus('匯出完成！檔案已下載。', `${segs.length} 段合併`);
+        if (exportCancel) updateStatus(TR('status.exportCancelled'), '');
+        else updateStatus(TR('status.exportDone'), TR('status.exportDone.merged', segs.length));
         setTimeout(hideStatus, 4000);
       } catch (err) {
         console.error('Merge export error:', err);
-        alert('合併匯出失敗：' + (err && err.message));
+        alert(TR('alert.mergeExportFailed', (err && err.message)));
       } finally {
         telemetry = savedTelemetry; telemetryEnabled = savedEnabled;
         isExporting = false; exportRecorder = null;
@@ -3388,7 +3435,7 @@ message SeiMetadata {
       isExporting = true;
       exportCancel = false;
       setLeftPaneLocked(true);
-      setExportProgress(0, '準備中…');
+      setExportProgress(0, TR('export.progress.preparing'));
       document.getElementById('export-progress').classList.remove('hidden');
 
       try {
@@ -3397,25 +3444,25 @@ message SeiMetadata {
         if (opts.composite || cams.length === 1) {
           // One merged file (grid) — or a single camera at native resolution
           await encodeOne({ cameras: cams, quality: opts.quality, startSec: opts.startSec, endSec: opts.endSec },
-            frac => setExportProgress(Math.min(99, Math.round(frac * 100)), '匯出中…'));
+            frac => setExportProgress(Math.min(99, Math.round(frac * 100)), TR('export.progress.exporting')));
         } else {
           // Export each selected camera as its own file, sequentially
           for (let i = 0; i < cams.length && !exportCancel; i++) {
-            const label = CAMERA_LABELS[cams[i]] || cams[i];
+            const label = camLabel(cams[i]);
             await encodeOne({ cameras: [cams[i]], quality: opts.quality, startSec: opts.startSec, endSec: opts.endSec },
               frac => setExportProgress(Math.min(99, Math.round(((i + frac) / cams.length) * 100)),
-                                        `匯出中… (${i + 1}/${cams.length}) ${label}`));
+                                        TR('export.progress.exporting.cam', i + 1, cams.length, label)));
           }
         }
 
-        if (exportCancel) updateStatus('已取消匯出。', '');
-        else updateStatus('匯出完成！檔案已下載。', '');
+        if (exportCancel) updateStatus(TR('status.exportCancelled'), '');
+        else updateStatus(TR('status.exportDone'), '');
         setTimeout(hideStatus, 4000);
       } catch (err) {
-        if (err && err.message === 'cancelled') updateStatus('已取消匯出。', '');
+        if (err && err.message === 'cancelled') updateStatus(TR('status.exportCancelled'), '');
         else {
           console.error('Export error:', err);
-          alert('匯出失敗：' + (err && err.message) + '\n\n部分瀏覽器對 MediaRecorder + canvas 的支援有限，請用最新版 Chrome / Edge。');
+          alert(TR('alert.exportFailed', (err && err.message)));
         }
       } finally {
         isExporting = false;
@@ -3621,7 +3668,7 @@ message SeiMetadata {
       clearDateFilter();
       document.getElementById('events-container').innerHTML = '';
       const emptyEl = document.getElementById('empty-state');
-      emptyEl.innerHTML = EMPTY_STATE_DEFAULT;
+      emptyEl.innerHTML = EMPTY_STATE_DEFAULT; applyLang();
       emptyEl.style.display = 'block';
       document.getElementById('event-count').textContent = '';
       hideStatus();
@@ -3629,22 +3676,7 @@ message SeiMetadata {
     }
     
     function showInfo() {
-      const msg = `Tesla Record Viewer
-
-這是一個純前端應用程式，專為在 GitHub Pages 上執行而設計。
-
-• 選擇資料夾後，瀏覽器會在本機讀取影片，絕不會上傳任何內容。
-• 多鏡頭同步播放使用標準 HTML5 Video API。
-• 匯出帶浮水印的影片使用 Canvas + MediaRecorder，在你的電腦上即時合成。
-• 推薦使用 Chrome 或 Edge 以獲得完整的 File System Access API 體驗（可直接選取整個資料夾並保留權限）。
-
-已知限制：
-- H.265 (HEVC) 影片在部分作業系統需要額外解碼器支援。
-- 大量檔案時掃描需要一點時間。
-- 匯出優先使用 MP4 (H.264)，瀏覽器不支援時自動退回 WebM。
-
-開源貢獻歡迎！`;
-      alert(msg);
+      alert(TR('info.dialog'));
     }
     
     // Keyboard shortcuts
@@ -3713,6 +3745,7 @@ message SeiMetadata {
       bindWatermarkControls();
       buildTelemSettingsUI();
       setupKeyboard();
+      applyLang(); // apply the persisted language to all data-i18n elements + dynamic labels
 
       // Continuous-playback toggle
       const ct = document.getElementById('continuous-toggle');
