@@ -350,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.4.4</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.5.0</div>
         </div>
       </div>
       
@@ -1453,6 +1453,7 @@
     let preloadedSet = null;     // { key, vids, cameras } prebuilt + loading
     let preloadHolder = null;
     let prerollDone = false;     // whether we've re-warmed the next set near this segment's end
+    let lastHeavyUI = 0;         // throttle gate (ms) for the heavy per-frame UI work
 
     function getPreloadHolder() {
       if (!preloadHolder) {
@@ -1614,9 +1615,11 @@
       const slider = document.getElementById('seek-slider');
       const timeDisp = document.getElementById('time-display');
       
-      function updateUI() {
+      function updateUI(forceHeavy) {
         if (!masterVideo || !masterVideo.duration) return;
 
+        // --- Cheap path (every tick): progress bar + time display + preroll check. Kept tiny so
+        // the slider never waits on canvas work — this is what made the bar hitch with the video. ---
         if (session && session.length > 1) {
           // Whole-session timeline (segments counted together)
           const durs = sessionDurations();
@@ -1630,18 +1633,25 @@
           slider.value = isNaN(percent) ? 0 : percent;
           timeDisp.textContent = `${formatTime(masterVideo.currentTime)} / ${formatTime(masterVideo.duration)}`;
         }
-
-        updateTimestampOverlays();
-        updateTelemetryHUD(masterVideo.currentTime);
         maybePrerollNext();
+
+        // --- Heavy path (throttled ~9Hz): timestamp overlay + telemetry HUD + GPS map redraw. ---
+        const now = performance.now();
+        if (forceHeavy || now - lastHeavyUI >= 110) {
+          lastHeavyUI = now;
+          updateTimestampOverlays();
+          updateTelemetryHUD(masterVideo.currentTime);
+        }
       }
 
-      masterVideo.addEventListener('timeupdate', updateUI);
+      masterVideo.addEventListener('timeupdate', () => updateUI(false));
       masterVideo.addEventListener('ended', () => { onSegmentEnded(); });
-      
+      // Update the HUD/maps immediately on a manual seek/pause (don't wait for the throttle)
+      masterVideo.addEventListener('seeked', () => updateUI(true));
+
       // Keep polling as safety for some browsers
       timeUpdateInterval = setInterval(() => {
-        if (isPlaying && masterVideo) updateUI();
+        if (isPlaying && masterVideo) updateUI(false);
       }, 120);
     }
     
@@ -1712,22 +1722,27 @@
       updateMarkReadout();
     }
     
+    let _syncing = false;
     function syncToMaster() {
-      if (!masterVideo) return;
-      const t = masterVideo.currentTime;
-      const playing = !masterVideo.paused;
-      
-      Object.values(videos).forEach(v => {
-        if (v.el !== masterVideo) {
-          try {
-            // Only act on videos that have a duration (ready)
-            if (v.el.duration > 0) {
-              v.el.currentTime = t;
-              if (playing) v.el.play().catch(() => {});
-            }
-          } catch (e) {}
-        }
-      });
+      // Re-entrancy guard: each thumbnail's own 'play' event also calls syncToMaster, which would
+      // otherwise re-seek every other video in the same burst at a segment cut. Run the body once.
+      if (_syncing || !masterVideo) return;
+      _syncing = true;
+      try {
+        const t = masterVideo.currentTime;
+        const playing = !masterVideo.paused;
+        Object.values(videos).forEach(v => {
+          if (v.el !== masterVideo) {
+            try {
+              // Only act on videos that have a duration (ready); skip no-op seeks/plays.
+              if (v.el.duration > 0) {
+                if (Math.abs((v.el.currentTime || 0) - t) > 0.15) v.el.currentTime = t;
+                if (playing && v.el.paused) v.el.play().catch(() => {});
+              }
+            } catch (e) {}
+          }
+        });
+      } finally { _syncing = false; }
     }
     
     function togglePlayAll() {
@@ -2048,22 +2063,53 @@ message SeiMetadata {
         const results = await Promise.all(loads);
         if (!results.some(Boolean)) return null;
         const project = (lat, lng) => ({ px: (lon2tx(lng, z) - minTx) * TP, py: (lat2ty(lat, z) - minTy) * TP });
+        // Cache each point's projected pixel coords ONCE (kills per-frame trig in the draw loop)
         let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
-        for (const p of route.pts) { const q = project(p.lat, p.lng); mnx = Math.min(mnx, q.px); mny = Math.min(mny, q.py); mxx = Math.max(mxx, q.px); mxy = Math.max(mxy, q.py); }
+        for (const p of route.pts) { const q = project(p.lat, p.lng); p.px = q.px; p.py = q.py; mnx = Math.min(mnx, q.px); mny = Math.min(mny, q.py); mxx = Math.max(mxx, q.px); mxy = Math.max(mxy, q.py); }
         const pad = Math.max(22, (mxx - mnx) * 0.12, (mxy - mny) * 0.12);
         const cx = (mnx + mxx) / 2, cy = (mny + mxy) / 2, half = Math.max((mxx - mnx) / 2, (mxy - mny) / 2) + pad;
-        return { img: comp, cropX: cx - half, cropY: cy - half, cropSize: half * 2, project, tp: TP, z };
+        // Pre-build a decimated route polyline as a Path2D in projected space, so each frame just
+        // strokes it natively (with a transform) instead of re-running a JS forEach over thousands of points.
+        const routePath = buildDecimatedPath(route.pts, p => [p.px, p.py]);
+        return { img: comp, cropX: cx - half, cropY: cy - half, cropSize: half * 2, project, tp: TP, z, routePath };
       } catch (e) { return null; }
     }
 
-    function drawRouteLine(ctx, route, tSec, S, toXY) {
-      if (!route.pts || route.pts.length < 2) return;
-      ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3 * S; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.beginPath(); route.pts.forEach((p, i) => { const c = toXY(p); i ? ctx.lineTo(c.X, c.Y) : ctx.moveTo(c.X, c.Y); }); ctx.stroke();
-      let cur = route.pts[0]; for (const p of route.pts) { if (p.t <= tSec) cur = p; else break; }
-      const c = toXY(cur);
-      ctx.fillStyle = '#e82127'; ctx.beginPath(); ctx.arc(c.X, c.Y, 4.5 * S, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 * S; ctx.stroke();
+    // Build a decimated Path2D from route points. coordOf(p) -> [x, y] in whatever space.
+    // ~36Hz GPS is wildly oversampled for a 160-420px canvas, so stride down to ~1500 points;
+    // the path is built ONCE and stroked natively each frame (no per-frame JS point loop).
+    function buildDecimatedPath(pts, coordOf) {
+      const path = new Path2D();
+      if (!pts || pts.length < 2) return path;
+      const stride = Math.max(1, Math.floor(pts.length / 1500));
+      let started = false;
+      for (let i = 0; i < pts.length; i++) {
+        if (i % stride !== 0 && i !== pts.length - 1) continue;
+        const c = coordOf(pts[i]);
+        if (!started) { path.moveTo(c[0], c[1]); started = true; } else path.lineTo(c[0], c[1]);
+      }
+      return path;
+    }
+    // Lazily cache the normalized-space (0..1) route path for the offline (no-tiles) maps.
+    function normRoutePath(route) {
+      if (!route._normPath) route._normPath = buildDecimatedPath(route.pts, p => [p.nx, p.ny]);
+      return route._normPath;
+    }
+    // Find the route point at/just-before tSec (for the car marker).
+    function routePointAt(route, tSec) {
+      let cur = route.pts[0];
+      for (const p of route.pts) { if (p.t <= tSec) cur = p; else break; }
+      return cur;
+    }
+    // Stroke a pre-built Path2D under a linear transform: canvas = src*scale + (tx,ty).
+    // These map canvases are not DPR-scaled (canvas px == CSS px), so the base CTM is identity
+    // and an absolute setTransform places the path correctly; clip set earlier still applies.
+    function strokePath(ctx, path, scale, tx, ty, color, widthPx) {
+      ctx.save();
+      ctx.setTransform(scale, 0, 0, scale, tx, ty);
+      ctx.strokeStyle = color; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.lineWidth = widthPx / scale;
+      ctx.stroke(path);
+      ctx.restore(); // restores the identity CTM captured by save()
     }
 
     // Paint a route minimap into [x,y,size] — with an OSM map background if available, else dark path-only.
@@ -2074,16 +2120,26 @@ message SeiMetadata {
       ctx.clip();
       if (mapBg && mapBg.img) {
         ctx.drawImage(mapBg.img, mapBg.cropX, mapBg.cropY, mapBg.cropSize, mapBg.cropSize, x, y, size, size);
-        drawRouteLine(ctx, route, tSec, S, p => { const q = mapBg.project(p.lat, p.lng); return { X: x + (q.px - mapBg.cropX) / mapBg.cropSize * size, Y: y + (q.py - mapBg.cropY) / mapBg.cropSize * size }; });
+        const sc = size / mapBg.cropSize;
+        if (mapBg.routePath) strokePath(ctx, mapBg.routePath, sc, x - mapBg.cropX * sc, y - mapBg.cropY * sc, '#2563eb', 3 * S);
+        const cur = routePointAt(route, tSec);
+        if (cur) drawCarDot(ctx, x + (cur.px - mapBg.cropX) / mapBg.cropSize * size, y + (cur.py - mapBg.cropY) / mapBg.cropSize * size, 4.5 * S, S);
         ctx.font = `${Math.round(8 * S)}px system-ui, sans-serif`;
         ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
         ctx.fillText('© CARTO © OSM', x + size - 3 * S, y + size - 2 * S);
       } else {
         ctx.fillStyle = 'rgba(15,17,21,0.92)'; ctx.fillRect(x, y, size, size);
-        const pad = 9 * S;
-        drawRouteLine(ctx, route, tSec, S, p => ({ X: x + pad + p.nx * (size - 2 * pad), Y: y + pad + p.ny * (size - 2 * pad) }));
+        const pad = 9 * S, inner = size - 2 * pad;
+        strokePath(ctx, normRoutePath(route), inner, x + pad, y + pad, '#2563eb', 3 * S);
+        const cur = routePointAt(route, tSec);
+        if (cur) drawCarDot(ctx, x + pad + cur.nx * inner, y + pad + cur.ny * inner, 4.5 * S, S);
       }
       ctx.restore();
+    }
+
+    function drawCarDot(ctx, X, Y, r, S) {
+      ctx.fillStyle = '#e82127'; ctx.beginPath(); ctx.arc(X, Y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 * S; ctx.stroke();
     }
 
     function drawMinimap(tSec) {
@@ -2100,28 +2156,23 @@ message SeiMetadata {
       ctx.beginPath();
       if (ctx.roundRect) ctx.roundRect(x, y, size, size, 12 * S); else ctx.rect(x, y, size, size);
       ctx.clip();
-      let cur = route.pts[0];
-      for (const p of route.pts) { if (p.t <= tSec) cur = p; else break; }
+      const cur = routePointAt(route, tSec);
       if (mapBg && mapBg.img && cur) {
-        const q = mapBg.project(cur.lat, cur.lng);
         // Fixed ~240 m view (street level) regardless of route length
         const mpp = 40075017 * Math.cos(cur.lat * Math.PI / 180) / (Math.pow(2, mapBg.z) * mapBg.tp);
         let win = 240 / mpp;
         win = Math.max(mapBg.tp * 0.35, Math.min(win, mapBg.img.width, mapBg.img.height));
-        const sx = q.px - win / 2, sy = q.py - win / 2;
+        const sx = cur.px - win / 2, sy = cur.py - win / 2;
         ctx.drawImage(mapBg.img, sx, sy, win, win, x, y, size, size);
-        ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3.5 * S; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-        ctx.beginPath();
-        route.pts.forEach((p, i) => { const pp = mapBg.project(p.lat, p.lng); const X = x + (pp.px - sx) / win * size, Y = y + (pp.py - sy) / win * size; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
-        ctx.stroke();
+        const sc = size / win;
+        if (mapBg.routePath) strokePath(ctx, mapBg.routePath, sc, x - sx * sc, y - sy * sc, '#2563eb', 3.5 * S);
         ctx.font = `${Math.round(8 * S)}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText('© CARTO © OSM', x + size - 3 * S, y + size - 2 * S);
+      } else if (cur) {
+        ctx.fillStyle = 'rgba(15,17,21,0.92)'; ctx.fillRect(x, y, size, size);
+        const sc = size * 3.2; // zoom
+        strokePath(ctx, normRoutePath(route), sc, x + size / 2 - cur.nx * sc, y + size / 2 - cur.ny * sc, '#2563eb', 3.5 * S);
       } else {
         ctx.fillStyle = 'rgba(15,17,21,0.92)'; ctx.fillRect(x, y, size, size);
-        const zoom = 3.2;
-        ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3.5 * S; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-        ctx.beginPath();
-        route.pts.forEach((p, i) => { const X = x + size / 2 + (p.nx - cur.nx) * size * zoom, Y = y + size / 2 + (p.ny - cur.ny) * size * zoom; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
-        ctx.stroke();
       }
       // car marker fixed at centre
       const ccx = x + size / 2, ccy = y + size / 2;
