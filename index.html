@@ -350,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.4.1</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.4.2</div>
         </div>
       </div>
       
@@ -696,17 +696,15 @@
       <div id="export-segrange-wrap" class="hidden mb-4">
         <div class="flex justify-between text-xs text-zinc-400 mb-1">
           <span>輸出時間範圍（<span id="export-merge-count">0</span> 段連續，自動串成一支）</span>
-          <span class="font-mono text-zinc-300">總長 <span id="export-total-label">0:00</span></span>
+          <span class="font-mono text-zinc-300">選取 <span id="export-range-len" class="text-zinc-100">0:00</span> / 總長 <span id="export-total-label">0:00</span></span>
         </div>
         <div class="flex items-center gap-2 text-sm flex-wrap">
           <span class="text-xs text-zinc-400">起</span>
-          <input type="text" id="export-time-start" value="0:00" class="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-sm font-mono text-zinc-200 text-center">
-          <button type="button" onclick="setExportTimeNow('start')" class="text-[11px] px-2 py-1 border border-zinc-700 rounded-lg hover:bg-zinc-800">現在</button>
+          <input type="text" id="export-time-start" value="0:00" oninput="onExportRangeInput()" class="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-sm font-mono text-zinc-200 text-center">
           <span class="text-xs text-zinc-400 ml-1">迄</span>
-          <input type="text" id="export-time-end" value="0:00" class="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-sm font-mono text-zinc-200 text-center">
-          <button type="button" onclick="setExportTimeNow('end')" class="text-[11px] px-2 py-1 border border-zinc-700 rounded-lg hover:bg-zinc-800">現在</button>
+          <input type="text" id="export-time-end" value="0:00" oninput="onExportRangeInput()" class="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-sm font-mono text-zinc-200 text-center">
         </div>
-        <div class="text-[11px] text-zinc-500 mt-1">輸入「分:秒」（例如 2:30），或按「現在」用目前播放位置。</div>
+        <div class="text-[11px] text-zinc-500 mt-1">已帶入你在播放器標記的 起點／終點，可直接微調（格式「分:秒」，例如 2:30）。</div>
       </div>
 
       <div id="export-trim-wrap" class="mb-4">
@@ -898,6 +896,8 @@
     // Continuous playback: a "session" is a run of consecutive 1-minute segments
     let session = null;     // [events] in chronological order, or null
     let sessionIdx = 0;     // which segment is currently loaded
+    let sessionRealDurs = [];   // measured per-segment durations (real, not 60s estimates)
+    let sessionMeasureToken = 0;
     let continuousMode = (() => { try { return localStorage.getItem('trv_continuous') !== '0'; } catch (e) { return true; } })();
     
     // Supported camera names (case insensitive matching)
@@ -1298,6 +1298,7 @@
       resetPreload();
       await loadVideosForEvent(currentEvent);
       schedulePreload();
+      measureSessionDurations(); // background: get real per-segment durations for an accurate timeline
     }
 
     // Called when the current segment ends — advance to the next segment if any
@@ -1611,17 +1612,64 @@
       return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     }
 
-    // Per-segment durations for the current session (accurate from telemetry when parsed,
-    // else the current segment's real duration + ~60s estimates for the rest).
+    // Per-segment durations for the current session. Preference order:
+    // telemetry (if parsed) → measured real durations → current segment's live duration → 60s estimate.
     function sessionDurations() {
       const n = session ? session.length : 1;
       const arr = [];
       for (let i = 0; i < n; i++) {
         if (telemetry && telemetry.segDur && telemetry.segDur[i]) arr.push(telemetry.segDur[i]);
+        else if (sessionRealDurs[i]) arr.push(sessionRealDurs[i]);
         else if (i === sessionIdx && masterVideo && masterVideo.duration > 0) arr.push(masterVideo.duration);
         else arr.push(60);
       }
       return arr;
+    }
+
+    // Measure each segment's true duration by reading video metadata, so the merged-session
+    // timeline (time display, marks, export range) is accurate even without parsing telemetry.
+    // Runs progressively in the background and refreshes the UI as each segment is measured.
+    async function measureSessionDurations() {
+      const token = ++sessionMeasureToken;
+      sessionRealDurs = [];
+      if (!session || session.length < 2) return;
+      const holder = getPreloadHolder();
+      const durs = new Array(session.length).fill(0);
+      for (let i = 0; i < session.length; i++) {
+        if (sessionMeasureToken !== token) return; // a newer session superseded us
+        const ev = session[i];
+        const cam = Object.keys(ev.clips).sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b))[0];
+        let d = 60;
+        if (cam) {
+          try {
+            const file = await getClipFile(ev.clips[cam]);
+            if (file) {
+              const url = URL.createObjectURL(file);
+              const v = document.createElement('video');
+              v.preload = 'metadata'; v.muted = true; v.src = url;
+              holder.appendChild(v);
+              await new Promise(res => { v.onloadedmetadata = () => res(); v.onerror = () => res(); setTimeout(res, 4000); });
+              if (isFinite(v.duration) && v.duration > 0) d = v.duration;
+              try { holder.removeChild(v); } catch (e) {}
+              URL.revokeObjectURL(url);
+            }
+          } catch (e) {}
+        }
+        durs[i] = d;
+        if (sessionMeasureToken === token) { sessionRealDurs = durs.slice(); refreshSessionTime(); }
+      }
+    }
+
+    // Recompute the session time display / seek slider / mark readout from current durations.
+    function refreshSessionTime() {
+      if (!session || session.length < 2 || !masterVideo) return;
+      const durs = sessionDurations();
+      const total = durs.reduce((a, b) => a + b, 0);
+      let before = 0; for (let i = 0; i < sessionIdx; i++) before += durs[i];
+      const elapsed = before + (masterVideo.currentTime || 0);
+      const td = document.getElementById('time-display');
+      if (td) td.textContent = `${formatTime(elapsed)} / ${formatTime(total)}`;
+      updateMarkReadout();
     }
     
     function syncToMaster() {
@@ -2348,6 +2396,7 @@ message SeiMetadata {
         document.getElementById('export-total-label').textContent = formatTime(total);
         document.getElementById('export-time-start').value = formatTime(markIn != null ? markIn : 0);
         document.getElementById('export-time-end').value = formatTime(markOut != null ? markOut : total);
+        onExportRangeInput();
       }
 
       // Trim range (single-clip export) — pre-fill from marks that fall inside this clip
@@ -2375,9 +2424,16 @@ message SeiMetadata {
       return parseFloat(str) || 0;
     }
     function sessionOffset(idx) { const d = sessionDurations(); let o = 0; for (let i = 0; i < idx && i < d.length; i++) o += d[i]; return o; }
-    function setExportTimeNow(which) {
-      const gt = sessionOffset(sessionIdx) + (masterVideo ? masterVideo.currentTime : 0);
-      document.getElementById(which === 'start' ? 'export-time-start' : 'export-time-end').value = formatTime(gt);
+    // Live readout of the selected session range length as the user edits 起/迄
+    function onExportRangeInput() {
+      const total = sessionDurations().reduce((a, b) => a + b, 0);
+      let s = parseTimeInput(document.getElementById('export-time-start').value);
+      let e = parseTimeInput(document.getElementById('export-time-end').value);
+      s = Math.max(0, Math.min(s, total));
+      e = Math.max(0, Math.min(e, total));
+      const len = Math.max(0, e - s);
+      const el = document.getElementById('export-range-len');
+      if (el) el.textContent = formatTime(len);
     }
 
     function onExportTrimInput(which) {
