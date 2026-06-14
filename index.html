@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tesla Record Viewer • 本地行車記錄器檢視器</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&amp;family=Inter:wght@400;500;600&amp;display=swap');
+    
+    :root {
+      --primary: #e82127;
+    }
+    
+    body {
+      font-family: 'Noto Sans TC', 'Inter', system-ui, sans-serif;
+    }
+    
+    .tesla-red {
+      color: #e82127;
+    }
+    
+    .video-container {
+      position: relative;
+      background: #111;
+      border-radius: 8px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+    }
+    
+    .video-container video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+    
+    .camera-label {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      background: rgba(0,0,0,0.75);
+      color: white;
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 500;
+      z-index: 10;
+    }
+    
+    .watermark-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      opacity: 0.85;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.6);
+      white-space: pre;
+    }
+    
+    .event-card {
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .event-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    }
+    
+    .event-card.active {
+      border-color: #e82127;
+      background-color: #1f2937;
+    }
+    
+    .player-grid {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+    
+    @media (min-width: 1024px) {
+      .player-grid.four {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: #9ca3af;
+    }
+    
+    .tesla-bg {
+      background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
+    }
+    
+    .status-bar {
+      background: #111827;
+      border: 1px solid #374151;
+    }
+    
+    .video-wrapper {
+      position: relative;
+    }
+    
+    .sync-status {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-200">
+  <!-- Top Bar -->
+  <div class="border-b border-zinc-800 bg-zinc-900">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-x-3">
+        <div class="w-9 h-9 rounded-xl bg-[#e82127] flex items-center justify-center">
+          <i class="fa-solid fa-video text-white text-xl"></i>
+        </div>
+        <div>
+          <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
+          <div class="text-[10px] text-zinc-500 -mt-1">本地處理 • GitHub Pages</div>
+        </div>
+      </div>
+      
+      <div class="flex items-center gap-x-2 text-sm">
+        <div class="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center gap-x-2 text-xs">
+          <i class="fa-solid fa-shield-halved text-emerald-400"></i>
+          <span class="text-emerald-400 font-medium">100% 本地處理</span>
+        </div>
+        <div onclick="showInfo()" 
+             class="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 cursor-pointer flex items-center gap-x-2 text-xs">
+          <i class="fa-solid fa-info-circle"></i>
+          <span>關於</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="max-w-7xl mx-auto px-6 py-8">
+    
+    <!-- Hero / Instructions -->
+    <div class="mb-8">
+      <h1 class="text-4xl font-semibold tracking-tighter mb-2">Tesla 行車記錄器檢視器</h1>
+      <p class="text-zinc-400 max-w-2xl">直接在瀏覽器中匯入你的 TeslaCam 資料夾，自動整理事件、多角度同步播放，並可加上浮水印後匯出單一影片。所有處理都在你的電腦上完成，絕不上傳任何資料。</p>
+    </div>
+
+    <!-- Action Bar -->
+    <div class="flex flex-wrap items-center gap-3 mb-6">
+      <button onclick="selectFolder()"
+              class="flex items-center gap-x-2.5 px-6 py-3 bg-white text-zinc-900 hover:bg-zinc-100 active:bg-white font-semibold rounded-2xl transition-all shadow-sm text-sm">
+        <i class="fa-solid fa-folder-open text-lg"></i>
+        <span id="select-btn-text">選擇 TeslaCam 資料夾</span>
+      </button>
+      
+      <div id="fallback-note" class="hidden text-xs px-3 py-2 bg-amber-950 border border-amber-900 text-amber-400 rounded-xl flex items-center gap-2">
+        <i class="fa-solid fa-exclamation-triangle"></i>
+        <span>瀏覽器不支援進階資料夾 API，已切換為檔案選擇模式（建議使用 Chrome / Edge）</span>
+      </div>
+      
+      <button onclick="clearAll()" 
+              class="px-4 py-3 text-sm border border-zinc-700 hover:bg-zinc-900 rounded-2xl flex items-center gap-x-2 transition-all">
+        <i class="fa-solid fa-trash"></i>
+        <span>清除</span>
+      </button>
+      
+      <div class="flex-1"></div>
+      
+      <div class="text-xs px-4 py-2 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center gap-2">
+        <div class="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
+        <span class="text-emerald-300">資料永遠留在本地</span>
+      </div>
+    </div>
+
+    <!-- Status -->
+    <div id="status-bar" class="hidden status-bar mb-6 px-4 py-2.5 rounded-2xl text-sm flex items-center gap-x-3">
+      <div id="status-text" class="flex-1 text-zinc-400"></div>
+      <div id="status-count" class="font-mono text-xs px-2.5 py-1 bg-zinc-950 rounded-lg border border-zinc-800"></div>
+    </div>
+
+    <!-- Events List -->
+    <div class="mb-4 flex items-baseline justify-between">
+      <div>
+        <span class="section-title">事件列表</span>
+        <span id="event-count" class="ml-2 text-xs text-zinc-500"></span>
+      </div>
+      <div class="text-xs text-zinc-500">點擊事件即可播放（已自動依時間排序）</div>
+    </div>
+    
+    <div id="events-container" 
+         class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 mb-8 min-h-[120px]">
+      <!-- Populated by JS -->
+      <div id="empty-state" class="col-span-full border border-dashed border-zinc-800 rounded-3xl p-8 text-center">
+        <div class="mx-auto w-12 h-12 flex items-center justify-center rounded-2xl bg-zinc-900 mb-4">
+          <i class="fa-solid fa-folder-open text-3xl text-zinc-600"></i>
+        </div>
+        <div class="text-lg font-medium mb-1">尚未載入任何資料</div>
+        <p class="text-sm text-zinc-500 max-w-xs mx-auto">點擊上方「選擇 TeslaCam 資料夾」開始。建議選擇整個 TeslaCam 資料夾，或直接選擇 SentryClips / SavedClips 子資料夾。</p>
+      </div>
+    </div>
+
+    <!-- Player Section -->
+    <div id="player-section" class="hidden">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <span class="section-title">同步播放器</span>
+          <span id="current-event-name" class="ml-3 text-sm font-medium text-white"></span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="closePlayer()" 
+                  class="text-xs px-4 py-1.5 rounded-xl border border-zinc-700 hover:bg-zinc-900 flex items-center gap-x-1.5">
+            <i class="fa-solid fa-times"></i>
+            <span>關閉播放器</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Player Controls -->
+      <div class="mb-3 p-4 bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-wrap items-center gap-x-4 gap-y-3">
+        <button onclick="togglePlayAll()" id="play-btn"
+                class="px-5 h-10 flex items-center justify-center gap-x-2 bg-white hover:bg-zinc-100 text-black font-semibold rounded-2xl text-sm w-28">
+          <i class="fa-solid fa-play mr-1" id="play-icon"></i>
+          <span id="play-text">播放</span>
+        </button>
+        
+        <div class="flex items-center gap-x-2 flex-1 min-w-[220px]">
+          <input type="range" id="seek-slider" min="0" max="100" step="0.1" value="0"
+                 class="flex-1 accent-[#e82127]" oninput="seekAll(this.value)">
+          <div id="time-display" class="font-mono text-xs tabular-nums w-28 text-right text-zinc-400">00:00 / 00:00</div>
+        </div>
+        
+        <div class="flex items-center gap-x-1.5">
+          <span class="text-xs text-zinc-500">速度</span>
+          <select id="speed-select" onchange="setPlaybackSpeed(this.value)" 
+                  class="bg-zinc-950 border border-zinc-700 text-xs rounded-xl px-3 py-1.5 focus:outline-none">
+            <option value="0.5">0.5×</option>
+            <option value="0.75">0.75×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.5">1.5×</option>
+            <option value="2">2×</option>
+          </select>
+        </div>
+        
+        <div class="flex items-center gap-2 pl-2 border-l border-zinc-800">
+          <label class="flex items-center gap-x-2 text-sm cursor-pointer select-none">
+            <input type="checkbox" id="watermark-toggle" checked onchange="updateWatermarkVisibility()" class="accent-[#e82127]">
+            <span>顯示浮水印</span>
+          </label>
+          
+          <button onclick="exportWithWatermark()"
+                  class="flex items-center gap-x-2 px-4 py-1.5 text-sm font-semibold bg-[#e82127] hover:bg-red-700 active:bg-red-800 rounded-2xl transition-colors">
+            <i class="fa-solid fa-download"></i>
+            <span>匯出帶浮水印影片</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Videos Grid -->
+      <div id="video-grid" class="player-grid four bg-zinc-900 p-3 rounded-3xl border border-zinc-800">
+        <!-- Video elements injected by JS -->
+      </div>
+      
+      <div class="mt-3 text-[11px] text-zinc-500 flex items-center gap-x-2">
+        <i class="fa-solid fa-info-circle"></i>
+        <span>提示：所有影片均從你本機磁碟即時讀取。匯出時會在瀏覽器內即時合成畫面與浮水印，完全不經過任何伺服器。</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Watermark Settings (simple) -->
+  <div class="max-w-7xl mx-auto px-6 pb-12">
+    <div class="border border-zinc-800 bg-zinc-900 rounded-3xl p-5 text-sm">
+      <div class="font-medium mb-3 flex items-center gap-2">
+        <i class="fa-solid fa-water"></i>
+        <span>浮水印設定（匯出時使用）</span>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label class="text-xs block mb-1 text-zinc-400">浮水印文字</label>
+          <input id="watermark-text" type="text" value="TeslaCam • 本地處理 • 僅供個人使用" 
+                 class="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-zinc-500">
+        </div>
+        <div>
+          <label class="text-xs block mb-1 text-zinc-400">位置</label>
+          <select id="watermark-pos" class="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm">
+            <option value="bottom">底部中央</option>
+            <option value="top">頂部中央</option>
+            <option value="bottom-right">右下</option>
+            <option value="top-left">左上</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs block mb-1 text-zinc-400">透明度</label>
+          <div class="flex items-center gap-3">
+            <input id="watermark-opacity" type="range" min="10" max="95" step="5" value="75" class="flex-1 accent-[#e82127]">
+            <span id="opacity-val" class="font-mono text-xs w-8">75%</span>
+          </div>
+        </div>
+      </div>
+      <div class="mt-3 text-xs text-zinc-500">匯出時會即時把目前播放的多鏡頭畫面合成單一影片，並疊加上方設定的浮水印。</div>
+    </div>
+  </div>
+
+  <footer class="text-center text-xs text-zinc-600 pb-8">
+    完全離線運作 • 適合 GitHub Pages 部署 • 靈感來自社群多個優秀 TeslaCam Viewer 專案
+  </footer>
+
+  <script>
+    // Tailwind script
+    function initTailwind() {
+      document.querySelectorAll('script').forEach(s => {
+        if (s.src && s.src.includes('tailwind')) {
+          // already loaded via CDN
+        }
+      });
+    }
+    
+    let directoryHandle = null;
+    let events = [];
+    let currentEvent = null;
+    let videos = {}; // { camera: HTMLVideoElement }
+    let isPlaying = false;
+    let masterVideo = null;
+    let timeUpdateInterval = null;
+    
+    // Supported camera names (case insensitive matching)
+    const CAMERA_ORDER = ['front', 'left_repeater', 'right_repeater', 'back', 'left_pillar', 'right_pillar', 'rear'];
+    const CAMERA_LABELS = {
+      'front': '前鏡頭',
+      'left_repeater': '左後視鏡',
+      'right_repeater': '右後視鏡',
+      'back': '後鏡頭',
+      'rear': '後鏡頭',
+      'left_pillar': '左 B 柱',
+      'right_pillar': '右 B 柱'
+    };
+    
+    function formatTimestamp(ts) {
+      // ts like 2024-06-10_14-22-33
+      if (!ts) return '未知';
+      const [date, time] = ts.split('_');
+      if (!date || !time) return ts;
+      return `${date} ${time.replace(/-/g, ':')}`;
+    }
+    
+    function updateStatus(text, countText = '') {
+      const bar = document.getElementById('status-bar');
+      const txt = document.getElementById('status-text');
+      const cnt = document.getElementById('status-count');
+      
+      bar.classList.remove('hidden');
+      txt.textContent = text;
+      cnt.textContent = countText;
+    }
+    
+    function hideStatus() {
+      document.getElementById('status-bar').classList.add('hidden');
+    }
+    
+    // Main entry: Select folder
+    async function selectFolder() {
+      const btnText = document.getElementById('select-btn-text');
+      const originalText = btnText.textContent;
+      btnText.textContent = '正在開啟...';
+      
+      try {
+        // Prefer File System Access API
+        if ('showDirectoryPicker' in window) {
+          directoryHandle = await window.showDirectoryPicker({
+            mode: 'read'
+          });
+          document.getElementById('fallback-note').classList.add('hidden');
+          await processDirectoryHandle(directoryHandle);
+        } else {
+          // Fallback: webkitdirectory
+          document.getElementById('fallback-note').classList.remove('hidden');
+          await useFallbackFileInput();
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error(err);
+          alert('無法存取資料夾：' + err.message + '\n\n請確認使用支援的瀏覽器 (Chrome / Edge 推薦)，並允許權限。');
+        }
+      } finally {
+        btnText.textContent = originalText;
+      }
+    }
+    
+    // Fallback using classic file input (webkitdirectory)
+    async function useFallbackFileInput() {
+      return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.webkitdirectory = true;
+        input.multiple = true;
+        
+        input.onchange = async () => {
+          if (!input.files || input.files.length === 0) {
+            resolve();
+            return;
+          }
+          
+          // Build a pseudo structure from FileList
+          const files = Array.from(input.files);
+          await processFallbackFiles(files);
+          resolve();
+        };
+        
+        input.click();
+      });
+    }
+    
+    // Process using File System Access API (best path)
+    async function processDirectoryHandle(handle, depth = 0) {
+      updateStatus('正在掃描資料夾與子資料夾...', '請稍候');
+      
+      const fileHandles = [];
+      await walkDirectory(handle, fileHandles);
+      
+      await parseAndGroupFiles(fileHandles);
+    }
+    
+    async function walkDirectory(dirHandle, fileHandles, currentPath = '') {
+      for await (const entry of dirHandle.values()) {
+        const path = currentPath ? `${currentPath}/${entry.name}` : entry.name;
+        
+        if (entry.kind === 'file') {
+          if (entry.name.toLowerCase().endsWith('.mp4')) {
+            fileHandles.push({ handle: entry, path, name: entry.name });
+          }
+        } else if (entry.kind === 'directory') {
+          // Recurse into subdirs (TeslaCam / SentryClips / SavedClips / event folders)
+          await walkDirectory(entry, fileHandles, path);
+        }
+      }
+    }
+    
+    // Fallback processor (File objects)
+    async function processFallbackFiles(files) {
+      updateStatus('正在處理選擇的檔案...', files.length + ' 個檔案');
+      
+      const fileHandles = files
+        .filter(f => f.name.toLowerCase().endsWith('.mp4'))
+        .map(f => ({
+          handle: null,     // not a real handle
+          file: f,          // direct File object
+          path: f.webkitRelativePath || f.name,
+          name: f.name
+        }));
+      
+      await parseAndGroupFiles(fileHandles);
+    }
+    
+    // Core parser: group by timestamp folder or filename prefix
+    async function parseAndGroupFiles(fileEntries) {
+      const groups = {};
+      
+      for (const entry of fileEntries) {
+        const name = entry.name;
+        // Match Tesla naming: 2024-06-10_14-22-33-front.mp4   or   2024-06-10_14-22-33-front-001.mp4 (rare)
+        const match = name.match(/^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})[-_](.+?)(?:-\d+)?\.mp4$/i);
+        
+        if (!match) continue;
+        
+        const timestamp = match[1];
+        let camera = match[2].toLowerCase();
+        
+        // Normalize camera names
+        if (camera.includes('left') && camera.includes('pillar')) camera = 'left_pillar';
+        else if (camera.includes('right') && camera.includes('pillar')) camera = 'right_pillar';
+        else if (camera.includes('left')) camera = 'left_repeater';
+        else if (camera.includes('right')) camera = 'right_repeater';
+        else if (camera.includes('back') || camera.includes('rear')) camera = 'back';
+        else if (camera.includes('front')) camera = 'front';
+        
+        // Try to find the event folder name (the directory the clip lives in)
+        // Use the timestamp itself as primary key, plus any parent folder if available
+        let key = timestamp;
+        
+        // If path contains a typical event folder (same timestamp or nearby), group by it
+        const pathParts = entry.path.split('/');
+        for (let i = pathParts.length - 2; i >= 0; i--) {
+          const part = pathParts[i];
+          if (/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/.test(part)) {
+            key = part; // Prefer the explicit event folder
+            break;
+          }
+        }
+        
+        if (!groups[key]) {
+          groups[key] = {
+            key,
+            timestamp,
+            clips: {},
+            displayTime: formatTimestamp(timestamp),
+            sourcePath: entry.path
+          };
+        }
+        
+        // Store the entry (handle or file + name)
+        groups[key].clips[camera] = entry;
+      }
+      
+      // Convert to sorted array (newest first)
+      events = Object.values(groups).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      
+      renderEvents();
+      updateStatus(`掃描完成，共找到 ${events.length} 個事件`, `${fileEntries.length} 個影片檔`);
+      
+      // Auto select first event if exists
+      if (events.length > 0) {
+        setTimeout(() => {
+          selectEvent(events[0]);
+        }, 120);
+      }
+    }
+    
+    function renderEvents() {
+      const container = document.getElementById('events-container');
+      container.innerHTML = '';
+      document.getElementById('empty-state').style.display = 'none';
+      
+      if (events.length === 0) {
+        document.getElementById('empty-state').style.display = 'block';
+        document.getElementById('event-count').textContent = '';
+        return;
+      }
+      
+      document.getElementById('event-count').textContent = `${events.length} 個事件`;
+      
+      events.forEach((ev, idx) => {
+        const camCount = Object.keys(ev.clips).length;
+        const cameras = Object.keys(ev.clips);
+        
+        const div = document.createElement('div');
+        div.className = `event-card border border-zinc-800 bg-zinc-900 hover:border-zinc-700 rounded-3xl p-4 cursor-pointer flex flex-col`;
+        
+        const camBadges = cameras.map(c => {
+          const label = CAMERA_LABELS[c] || c;
+          return `<span class="text-[10px] px-1.5 py-px bg-zinc-800 text-zinc-400 rounded">${label}</span>`;
+        }).join('');
+        
+        div.innerHTML = `
+          <div class="flex justify-between items-start">
+            <div>
+              <div class="font-semibold text-lg tracking-tight">${ev.displayTime}</div>
+              <div class="text-xs text-zinc-500 mt-0.5">${ev.key}</div>
+            </div>
+            <div class="text-right">
+              <div class="text-xs px-2.5 py-px rounded bg-zinc-950 border border-zinc-800 tabular-nums">${camCount} 鏡頭</div>
+            </div>
+          </div>
+          
+          <div class="mt-3 flex flex-wrap gap-1">${camBadges}</div>
+          
+          <div class="mt-auto pt-3 text-[10px] text-zinc-500 flex items-center justify-between">
+            <span>${ev.sourcePath.split('/').slice(0, -1).pop() || 'TeslaCam'}</span>
+            <span class="font-mono">${Object.keys(ev.clips).length} 檔案</span>
+          </div>
+        `;
+        
+        div.onclick = () => selectEvent(ev, div);
+        
+        container.appendChild(div);
+        
+        // Store reference for active styling
+        ev._cardEl = div;
+      });
+    }
+    
+    async function selectEvent(eventData, cardEl = null) {
+      // Deselect previous
+      events.forEach(e => {
+        if (e._cardEl) e._cardEl.classList.remove('active', 'border-[#e82127]');
+      });
+      
+      if (cardEl) {
+        cardEl.classList.add('active', 'border-[#e82127]');
+      } else if (eventData._cardEl) {
+        eventData._cardEl.classList.add('active', 'border-[#e82127]');
+      }
+      
+      currentEvent = eventData;
+      document.getElementById('player-section').classList.remove('hidden');
+      document.getElementById('current-event-name').textContent = `${eventData.displayTime} · ${Object.keys(eventData.clips).length} 鏡頭`;
+      
+      await loadVideosForEvent(eventData);
+    }
+    
+    async function loadVideosForEvent(eventData) {
+      const grid = document.getElementById('video-grid');
+      grid.innerHTML = '';
+      videos = {};
+      masterVideo = null;
+      
+      const cameras = Object.keys(eventData.clips).sort((a, b) => {
+        return CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b);
+      });
+      
+      for (const cam of cameras) {
+        const entry = eventData.clips[cam];
+        
+        let file;
+        if (entry.file) {
+          // fallback mode
+          file = entry.file;
+        } else if (entry.handle) {
+          file = await entry.handle.getFile();
+        } else {
+          continue;
+        }
+        
+        const url = URL.createObjectURL(file);
+        
+        const wrapper = document.createElement('div');
+        wrapper.className = 'video-wrapper';
+        
+        const label = CAMERA_LABELS[cam] || cam;
+        
+        wrapper.innerHTML = `
+          <div class="video-container border border-zinc-700">
+            <video playsinline preload="metadata"></video>
+            <div class="camera-label">${label}</div>
+            <div class="watermark-overlay hidden" style="font-size: clamp(11px, 1.8vw, 15px);"></div>
+          </div>
+        `;
+        
+        const videoEl = wrapper.querySelector('video');
+        videoEl.src = url;
+        videoEl.dataset.camera = cam;
+        
+        // Basic event wiring for sync
+        videoEl.addEventListener('loadedmetadata', () => {
+          if (!masterVideo) {
+            masterVideo = videoEl;
+            attachMasterListeners();
+          }
+        });
+        
+        videoEl.addEventListener('play', () => {
+          if (videoEl !== masterVideo) syncToMaster();
+        });
+        
+        grid.appendChild(wrapper);
+        
+        videos[cam] = {
+          el: videoEl,
+          wrapper: wrapper,
+          url: url
+        };
+      }
+      
+      // Set initial watermark text
+      updateWatermarkVisibility();
+      
+      // Reset controls
+      isPlaying = false;
+      updatePlayButton();
+      document.getElementById('seek-slider').value = 0;
+      document.getElementById('time-display').textContent = '00:00 / 00:00';
+    }
+    
+    function attachMasterListeners() {
+      if (!masterVideo) return;
+      
+      // Clear previous interval
+      if (timeUpdateInterval) clearInterval(timeUpdateInterval);
+      
+      const slider = document.getElementById('seek-slider');
+      const timeDisp = document.getElementById('time-display');
+      
+      function updateUI() {
+        if (!masterVideo || !masterVideo.duration) return;
+        
+        const percent = (masterVideo.currentTime / masterVideo.duration) * 100;
+        slider.value = isNaN(percent) ? 0 : percent;
+        
+        const cur = formatTime(masterVideo.currentTime);
+        const dur = formatTime(masterVideo.duration);
+        timeDisp.textContent = `${cur} / ${dur}`;
+      }
+      
+      masterVideo.addEventListener('timeupdate', updateUI);
+      masterVideo.addEventListener('ended', () => {
+        isPlaying = false;
+        updatePlayButton();
+      });
+      
+      // Keep polling as safety for some browsers
+      timeUpdateInterval = setInterval(() => {
+        if (isPlaying && masterVideo) updateUI();
+      }, 120);
+    }
+    
+    function formatTime(sec) {
+      if (!sec || isNaN(sec)) return '00:00';
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+    
+    function syncToMaster() {
+      if (!masterVideo) return;
+      const t = masterVideo.currentTime;
+      const playing = !masterVideo.paused;
+      
+      Object.values(videos).forEach(v => {
+        if (v.el !== masterVideo) {
+          try {
+            v.el.currentTime = t;
+            if (playing) v.el.play().catch(() => {});
+          } catch (e) {}
+        }
+      });
+    }
+    
+    function togglePlayAll() {
+      if (!masterVideo) return;
+      
+      if (isPlaying) {
+        Object.values(videos).forEach(v => v.el.pause());
+        isPlaying = false;
+      } else {
+        const promises = Object.values(videos).map(v => v.el.play().catch(() => {}));
+        Promise.all(promises).then(() => {
+          isPlaying = true;
+          // Make sure they are roughly in sync
+          syncToMaster();
+        });
+      }
+      updatePlayButton();
+    }
+    
+    function updatePlayButton() {
+      const icon = document.getElementById('play-icon');
+      const text = document.getElementById('play-text');
+      
+      if (isPlaying) {
+        icon.classList.remove('fa-play');
+        icon.classList.add('fa-pause');
+        text.textContent = '暫停';
+      } else {
+        icon.classList.remove('fa-pause');
+        icon.classList.add('fa-play');
+        text.textContent = '播放';
+      }
+    }
+    
+    function seekAll(percent) {
+      if (!masterVideo || !masterVideo.duration) return;
+      
+      const newTime = (percent / 100) * masterVideo.duration;
+      Object.values(videos).forEach(v => {
+        try {
+          v.el.currentTime = newTime;
+        } catch (e) {}
+      });
+    }
+    
+    function setPlaybackSpeed(rate) {
+      const speed = parseFloat(rate);
+      Object.values(videos).forEach(v => {
+        v.el.playbackRate = speed;
+      });
+    }
+    
+    function updateWatermarkVisibility() {
+      const show = document.getElementById('watermark-toggle').checked;
+      const text = document.getElementById('watermark-text').value.trim() || 'Tesla Record Viewer';
+      const pos = document.getElementById('watermark-pos').value;
+      const opacity = parseInt(document.getElementById('watermark-opacity').value, 10) / 100;
+      
+      Object.values(videos).forEach(v => {
+        const overlay = v.wrapper.querySelector('.watermark-overlay');
+        if (!overlay) return;
+        
+        overlay.style.opacity = show ? opacity : 0;
+        overlay.classList.toggle('hidden', !show);
+        
+        // Position
+        overlay.style.justifyContent = (pos.includes('right')) ? 'flex-end' : (pos.includes('left') ? 'flex-start' : 'center');
+        overlay.style.alignItems = pos.includes('top') ? 'flex-start' : 'flex-end';
+        overlay.style.padding = '12px 16px';
+        
+        overlay.innerHTML = `<div style="background: rgba(0,0,0,0.55); padding: 1px 9px; border-radius: 3px; font-size: inherit;">${text}</div>`;
+      });
+    }
+    
+    // Listen to watermark input changes live
+    function bindWatermarkControls() {
+      ['watermark-text', 'watermark-pos', 'watermark-opacity'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.addEventListener('input', () => {
+            const opVal = document.getElementById('opacity-val');
+            if (id === 'watermark-opacity' && opVal) {
+              opVal.textContent = document.getElementById('watermark-opacity').value + '%';
+            }
+            if (currentEvent) updateWatermarkVisibility();
+          });
+        }
+      });
+      
+      // Initialize opacity display
+      const opEl = document.getElementById('watermark-opacity');
+      const opVal = document.getElementById('opacity-val');
+      if (opEl && opVal) {
+        opVal.textContent = opEl.value + '%';
+      }
+    }
+    
+    // ========== EXPORT WITH WATERMARK ==========
+    async function exportWithWatermark() {
+      if (!currentEvent || Object.keys(videos).length === 0) {
+        alert('請先選擇一個事件並載入影片');
+        return;
+      }
+      
+      const text = document.getElementById('watermark-text').value.trim() || 'Tesla Record Viewer';
+      const pos = document.getElementById('watermark-pos').value;
+      const opacity = parseInt(document.getElementById('watermark-opacity').value, 10) / 100;
+      
+      const btns = document.querySelectorAll('#player-section button');
+      btns.forEach(b => b.disabled = true);
+      
+      const originalStatus = document.getElementById('status-text').textContent;
+      updateStatus('正在準備匯出（合成畫面 + 浮水印）...', '請勿切換分頁');
+      
+      try {
+        // Determine canvas size. Use a reasonable 16:9 composite
+        // 2x2 layout or adaptive based on number of cameras
+        const camList = Object.keys(videos);
+        const count = camList.length;
+        
+        // Output resolution (reasonable for export)
+        const OUTPUT_WIDTH = 1280;
+        const OUTPUT_HEIGHT = 720;
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = OUTPUT_WIDTH;
+        canvas.height = OUTPUT_HEIGHT;
+        const ctx = canvas.getContext('2d', { alpha: false });
+        
+        // Create a fresh set of video elements for stable recording
+        // (use the existing ones but pause original UI videos)
+        const exportVideos = {};
+        
+        for (const cam of camList) {
+          const original = videos[cam].el;
+          const clone = document.createElement('video');
+          clone.src = original.src;
+          clone.muted = true;
+          clone.playsInline = true;
+          exportVideos[cam] = clone;
+        }
+        
+        // Wait for all to load metadata
+        await Promise.all(Object.values(exportVideos).map(v => new Promise(res => {
+          if (v.readyState >= 1) res();
+          else v.onloadedmetadata = res;
+        })));
+        
+        // Start from current time of master
+        const startTime = masterVideo ? masterVideo.currentTime : 0;
+        Object.values(exportVideos).forEach(v => { v.currentTime = startTime; });
+        
+        // Figure out layout
+        let layout = [];
+        if (count === 1) {
+          layout = [[camList[0], 0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT]];
+        } else if (count === 2) {
+          const w = OUTPUT_WIDTH / 2;
+          layout = [
+            [camList[0], 0, 0, w, OUTPUT_HEIGHT],
+            [camList[1], w, 0, w, OUTPUT_HEIGHT]
+          ];
+        } else {
+          // 2x2 or 3+ in grid-ish
+          const cols = (count <= 4) ? 2 : 3;
+          const rows = Math.ceil(count / cols);
+          const cellW = OUTPUT_WIDTH / cols;
+          const cellH = OUTPUT_HEIGHT / rows;
+          
+          camList.forEach((cam, i) => {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            layout.push([cam, col * cellW, row * cellH, cellW, cellH]);
+          });
+        }
+        
+        // Start recording the canvas
+        const stream = canvas.captureStream(30);
+        const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') 
+                   ? 'video/webm;codecs=vp9' 
+                   : 'video/webm';
+        const recorder = new MediaRecorder(stream, { mimeType: mime });
+        
+        const chunks = [];
+        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        
+        const exportPromise = new Promise((resolve) => {
+          recorder.onstop = () => {
+            const blob = new Blob(chunks, { type: mime });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const safeName = (currentEvent.displayTime || 'tesla').replace(/[:\s]/g, '-');
+            a.download = `TeslaCam_${safeName}_watermark.webm`;
+            a.href = url;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            resolve();
+          };
+        });
+        
+        recorder.start();
+        
+        // Play the export videos
+        const playPromises = Object.values(exportVideos).map(v => v.play().catch(() => {}));
+        await Promise.all(playPromises);
+        
+        const fps = 30;
+        const duration = masterVideo ? (masterVideo.duration - startTime) : 60;
+        let frame = 0;
+        const totalFrames = Math.floor(duration * fps);
+        
+        // Draw loop
+        const drawFrame = () => {
+          ctx.fillStyle = '#111111';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          
+          // Draw each camera
+          layout.forEach(([cam, x, y, w, h]) => {
+            const vid = exportVideos[cam];
+            if (vid && vid.readyState >= 2) {
+              ctx.drawImage(vid, x, y, w, h);
+            }
+          });
+          
+          // Draw watermark
+          ctx.save();
+          ctx.globalAlpha = opacity * 0.9;
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '600 22px system-ui, -apple-system, sans-serif';
+          ctx.shadowColor = 'rgba(0,0,0,0.65)';
+          ctx.shadowBlur = 6;
+          ctx.shadowOffsetY = 2;
+          
+          let textX = canvas.width / 2;
+          let textY = canvas.height - 28;
+          
+          if (pos === 'top') textY = 32;
+          if (pos === 'bottom-right') { textX = canvas.width - 28; ctx.textAlign = 'right'; }
+          if (pos === 'top-left') { textX = 28; ctx.textAlign = 'left'; textY = 32; }
+          if (pos === 'bottom') ctx.textAlign = 'center';
+          
+          ctx.fillText(text, textX, textY);
+          ctx.restore();
+          
+          frame++;
+          
+          // Stop conditions
+          const anyEnded = Object.values(exportVideos).some(v => v.ended);
+          const reachedEnd = masterVideo && (exportVideos[camList[0]]?.currentTime >= (masterVideo.duration - 0.2));
+          
+          if (anyEnded || reachedEnd || frame > totalFrames + 30) {
+            try { recorder.stop(); } catch(e){}
+            return;
+          }
+          
+          // Continue
+          setTimeout(() => requestAnimationFrame(drawFrame), 1000 / fps);
+        };
+        
+        // Kick off drawing
+        requestAnimationFrame(drawFrame);
+        
+        await exportPromise;
+        
+        updateStatus('匯出完成！檔案已下載。', 'webm 格式');
+        setTimeout(hideStatus, 4200);
+        
+      } catch (err) {
+        console.error('Export error:', err);
+        alert('匯出失敗：' + err.message + '\n\n部分瀏覽器對 MediaRecorder + canvas 的支援有限，請嘗試最新版 Chrome / Edge。');
+      } finally {
+        btns.forEach(b => b.disabled = false);
+        // Restore original videos if they were paused
+        if (isPlaying) {
+          Object.values(videos).forEach(v => v.el.play().catch(()=>{}));
+        }
+      }
+    }
+    
+    function closePlayer() {
+      // Stop everything
+      Object.values(videos).forEach(v => {
+        try {
+          v.el.pause();
+          if (v.url) URL.revokeObjectURL(v.url);
+        } catch(e) {}
+      });
+      
+      if (timeUpdateInterval) {
+        clearInterval(timeUpdateInterval);
+        timeUpdateInterval = null;
+      }
+      
+      document.getElementById('player-section').classList.add('hidden');
+      document.getElementById('video-grid').innerHTML = '';
+      videos = {};
+      masterVideo = null;
+      currentEvent = null;
+      isPlaying = false;
+    }
+    
+    function clearAll() {
+      closePlayer();
+      events = [];
+      directoryHandle = null;
+      document.getElementById('events-container').innerHTML = '';
+      document.getElementById('empty-state').style.display = 'block';
+      document.getElementById('event-count').textContent = '';
+      hideStatus();
+    }
+    
+    function showInfo() {
+      const msg = `Tesla Record Viewer
+
+這是一個純前端應用程式，專為在 GitHub Pages 上執行而設計。
+
+• 選擇資料夾後，瀏覽器會在本機讀取影片，絕不會上傳任何內容。
+• 多鏡頭同步播放使用標準 HTML5 Video API。
+• 匯出帶浮水印的影片使用 Canvas + MediaRecorder，在你的電腦上即時合成。
+• 推薦使用 Chrome 或 Edge 以獲得完整的 File System Access API 體驗（可直接選取整個資料夾並保留權限）。
+
+已知限制：
+- H.265 (HEVC) 影片在部分作業系統需要額外解碼器支援。
+- 大量檔案時掃描需要一點時間。
+- 匯出的影片為 WebM 格式（相容性佳）。
+
+開源貢獻歡迎！`;
+      alert(msg);
+    }
+    
+    // Keyboard shortcuts
+    function setupKeyboard() {
+      document.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' && currentEvent) {
+          e.preventDefault();
+          togglePlayAll();
+        }
+        if (e.key.toLowerCase() === 'f' && currentEvent) {
+          e.preventDefault();
+          const toggle = document.getElementById('watermark-toggle');
+          toggle.checked = !toggle.checked;
+          updateWatermarkVisibility();
+        }
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e' && currentEvent) {
+          e.preventDefault();
+          exportWithWatermark();
+        }
+      });
+      
+      // Also update watermark on checkbox change anywhere
+      const wmToggle = document.getElementById('watermark-toggle');
+      if (wmToggle) {
+        wmToggle.addEventListener('change', updateWatermarkVisibility);
+      }
+    }
+    
+    // Boot
+    function bootstrap() {
+      initTailwind();
+      bindWatermarkControls();
+      setupKeyboard();
+      
+      // Demo hint for first time (only in console)
+      console.log('%c[TeslaRecordViewer] 純本地應用程式已就緒。使用「選擇 TeslaCam 資料夾」開始。', 'color:#555');
+      
+      // Optional: auto hint if user has no events yet after 6s (harmless)
+      setTimeout(() => {
+        const empty = document.getElementById('empty-state');
+        if (empty && !empty.classList.contains('hidden') && events.length === 0) {
+          // do nothing, let user explore
+        }
+      }, 6200);
+    }
+    
+    window.addEventListener('load', bootstrap);
+    
+    // Make some functions global for debugging if needed
+    window.TRV = { selectFolder, clearAll };
+  </script>
+</body>
+</html>
