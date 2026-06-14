@@ -676,7 +676,12 @@
         <span>合成為單一畫面<span class="block text-[11px] text-zinc-500">勾選：多鏡頭合併成一個畫面。<b>取消勾選</b>：每個鏡頭<b>分別匯出</b>成各自的檔案（原生解析度）。</span></span>
       </label>
 
-      <div class="mb-4">
+      <label id="export-merge-wrap" class="hidden flex items-start gap-2 text-sm mb-4 cursor-pointer select-none">
+        <input type="checkbox" id="export-merge" checked class="accent-[#e82127] mt-0.5">
+        <span>連續合併輸出（<span id="export-merge-count">0</span> 段串成一支）<span class="block text-[11px] text-zinc-500">把目前選取的連續分段接成一支影片；GPS 與遙測也會串成連續的。取消勾選則只輸出目前這一段。</span></span>
+      </label>
+
+      <div id="export-trim-wrap" class="mb-4">
         <div class="flex justify-between text-xs text-zinc-400 mb-1">
           <span>剪輯範圍（拉桿選起訖）</span>
           <span class="font-mono text-zinc-300"><span id="export-start-label">0:00</span> → <span id="export-end-label">0:00</span></span>
@@ -1989,6 +1994,16 @@ message SeiMetadata {
       const fmt = pickExportFormat();
       document.getElementById('export-format-note').textContent = '格式：' + fmt.label;
 
+      // Continuous-session merge option (only when a multi-segment session is selected)
+      const isSession = session && session.length > 1;
+      const mergeWrap = document.getElementById('export-merge-wrap');
+      mergeWrap.classList.toggle('hidden', !isSession);
+      if (isSession) document.getElementById('export-merge-count').textContent = session.length;
+      const mergeChk = document.getElementById('export-merge');
+      mergeChk.checked = isSession;
+      const syncTrim = () => { document.getElementById('export-trim-wrap').style.display = (isSession && mergeChk.checked) ? 'none' : ''; };
+      mergeChk.onchange = syncTrim; syncTrim();
+
       // Trim range defaults: 0 → clip duration
       const dur = (masterVideo && isFinite(masterVideo.duration) && masterVideo.duration > 0) ? masterVideo.duration : 60;
       const startEl = document.getElementById('export-start');
@@ -2023,8 +2038,9 @@ message SeiMetadata {
       const composite = document.getElementById('export-composite').checked;
       const startSec = +document.getElementById('export-start').value;
       const endSec = +document.getElementById('export-end').value;
+      const mergeSession = !!(session && session.length > 1) && document.getElementById('export-merge').checked;
       closeExportModal();
-      runExport({ cameras: checked, quality, composite, startSec, endSec });
+      runExport({ cameras: checked, quality, composite, startSec, endSec, mergeSession });
     }
 
     function setExportProgress(pct, title) {
@@ -2194,7 +2210,256 @@ message SeiMetadata {
       ctx.textAlign = 'center';
     }
 
+    // Shared per-frame draw for export (single + merged). telemTime overrides the time used
+    // for telemetry lookup (the merged export passes a global session time so GPS is continuous).
+    function drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, wm, tsBase, tsBaseCam, telemTime) {
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      layout.forEach(([cam, x, y, w, h]) => {
+        const vid = exportVideos[cam];
+        if (vid && vid.readyState >= 2) drawContain(ctx, vid, x, y, w, h);
+      });
+
+      // Composite: label each cell with its camera (top-row labels clear a top watermark)
+      if (camList.length > 1) {
+        const topShift = wm.pos.includes('top') ? 56 * S : 0;
+        ctx.save();
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.font = `600 ${Math.round(15 * S)}px system-ui, sans-serif`;
+        layout.forEach(([cam, x, y, w, h]) => {
+          const label = CAMERA_LABELS[cam] || cam;
+          const lx = x + 12 * S, ly = y + 16 * S + (y < 1 ? topShift : 0);
+          const tw = ctx.measureText(label).width;
+          ctx.fillStyle = 'rgba(0,0,0,0.6)';
+          ctx.beginPath();
+          if (ctx.roundRect) ctx.roundRect(lx - 6 * S, ly - 12 * S, tw + 12 * S, 24 * S, 6 * S);
+          else ctx.rect(lx - 6 * S, ly - 12 * S, tw + 12 * S, 24 * S);
+          ctx.fill();
+          ctx.fillStyle = '#fff';
+          ctx.fillText(label, lx, ly);
+        });
+        ctx.restore();
+      }
+
+      const refCt = exportVideos[tsBaseCam] ? exportVideos[tsBaseCam].currentTime : 0;
+      const tt = (telemTime != null) ? telemTime : refCt;
+
+      // Watermark (timestamp uses the per-segment clock)
+      const tsStr = tsBase ? formatFootageClock(tsBase, refCt) : '';
+      let lines;
+      if (wm.mode === 'text') lines = [wm.text];
+      else if (wm.mode === 'both') lines = [tsStr, wm.text].filter(Boolean);
+      else lines = tsStr ? [tsStr] : [];
+      if (lines.length) {
+        ctx.save();
+        ctx.globalAlpha = wm.opacity * 0.95;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `600 ${Math.round(22 * S)}px system-ui, -apple-system, sans-serif`;
+        ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 6 * S; ctx.shadowOffsetY = 2 * S;
+        const lineH = 28 * S, topPos = wm.pos.includes('top');
+        let textX = canvas.width / 2, baseY = topPos ? 32 * S : canvas.height - 28 * S;
+        ctx.textAlign = 'center';
+        if (wm.pos === 'bottom-right') { textX = canvas.width - 28 * S; ctx.textAlign = 'right'; }
+        if (wm.pos === 'top-left') { textX = 28 * S; ctx.textAlign = 'left'; }
+        lines.forEach((ln, i) => { const yy = topPos ? baseY + i * lineH : baseY - (lines.length - 1 - i) * lineH; ctx.fillText(ln, textX, yy); });
+        ctx.restore();
+      }
+
+      // Telemetry burn-in (uses global session time when merging)
+      if (telemetryEnabled && telemetry) {
+        const sei = findSeiAt(tt);
+        if (sei) drawTelemetryPanel(ctx, canvas, S, sei, tt);
+      }
+    }
+
+    // Parse SEI across ALL session segments into one combined timeline (global time),
+    // so the merged export's telemetry — especially the GPS path — is continuous.
+    async function parseSessionTelemetry(segments, refCam) {
+      const ok = await ensureProtobuf();
+      const SeiType = ok ? initTelemetryProto() : null;
+      if (!SeiType) return null;
+      const samples = [], segDur = []; let offset = 0, accelMax = 0;
+      for (const seg of segments) {
+        const cam = seg.clips[refCam] ? refCam : Object.keys(seg.clips)[0];
+        let dur = 60;
+        try {
+          const file = await getClipFile(seg.clips[cam]);
+          if (file) {
+            const mp4 = new DashcamMP4(await file.arrayBuffer());
+            const config = mp4.getConfig();
+            const frames = mp4.parseFrames(SeiType);
+            const durations = config.durations || [];
+            let t = 0;
+            for (let i = 0; i < frames.length; i++) {
+              if (frames[i].sei) { samples.push({ t: offset + t, sei: frames[i].sei }); accelMax = Math.max(accelMax, frames[i].sei.acceleratorPedalPosition || 0); }
+              t += (durations[i] || 27.78) / 1000;
+            }
+            if (t > 0) dur = t;
+          }
+        } catch (e) {}
+        segDur.push(dur);
+        offset += dur;
+      }
+      if (!samples.length) return null;
+      return { samples, route: buildRoute(samples), accelScale: accelMax <= 1.5 ? 1 : 100, segDur };
+    }
+
+    // Export a whole continuous session merged into one file (one recorder across all segments)
+    async function runMergeExport(opts) {
+      const wm = getWatermarkSettings();
+      const fmt = pickExportFormat();
+      const QUAL = opts.quality === 'std'
+        ? { gridW: 1280, gridH: 720, singleMaxW: 1280, bitrate: 8_000_000 }
+        : opts.quality === 'max'
+          ? { gridW: 2560, gridH: 1440, singleMaxW: 100000, bitrate: 40_000_000 }
+          : { gridW: 1920, gridH: 1080, singleMaxW: 1920, bitrate: 20_000_000 };
+      const camList = opts.cameras.slice().sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
+      const tsBaseCam = camList.includes('front') ? 'front' : camList[0];
+      const segs = opts.segments;
+
+      isExporting = true; exportCancel = false;
+      setLeftPaneLocked(true);
+      setExportProgress(0, '準備中…');
+      document.getElementById('export-progress').classList.remove('hidden');
+
+      const savedTelemetry = telemetry, savedEnabled = telemetryEnabled;
+      const wantTelem = savedEnabled; // user currently has telemetry shown
+      const holder = document.createElement('div');
+      holder.style.cssText = 'position:fixed;left:-10000px;top:0;opacity:0;pointer-events:none;';
+      document.body.appendChild(holder);
+      let canvas = null, ctx = null, S = 1, stream, vtrack, recorder, supportsManual = false;
+      const chunks = [];
+
+      try {
+        // Build combined telemetry across all segments (continuous GPS / timeline)
+        let mergeTelem = null;
+        if (wantTelem) {
+          setExportProgress(0, '解析遙測…');
+          mergeTelem = await parseSessionTelemetry(segs, tsBaseCam);
+        }
+        telemetry = mergeTelem; telemetryEnabled = !!mergeTelem;
+
+        let donePromise = null;
+        let globalOffset = 0;
+
+        for (let si = 0; si < segs.length && !exportCancel; si++) {
+          const seg = segs[si];
+          const exportVideos = {}; const urls = [];
+          for (const cam of camList) {
+            const file = await getClipFile(seg.clips[cam]);
+            if (!file) continue;
+            const url = URL.createObjectURL(file); urls.push(url);
+            const clone = document.createElement('video');
+            clone.src = url; clone.muted = true; clone.playsInline = true; clone.preload = 'auto';
+            holder.appendChild(clone);
+            exportVideos[cam] = clone;
+          }
+          if (!Object.keys(exportVideos).length) { globalOffset += (mergeTelem && mergeTelem.segDur[si]) || 60; continue; }
+          await Promise.all(Object.values(exportVideos).map(v => new Promise(res => {
+            if (v.readyState >= 1) res(); else { v.onloadedmetadata = () => res(); setTimeout(res, 5000); }
+          })));
+          if (exportCancel) { urls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} }); break; }
+
+          // First segment: set up canvas + recorder (persist across all segments)
+          if (!canvas) {
+            canvas = document.createElement('canvas');
+            if (camList.length === 1) {
+              const v0 = exportVideos[camList[0]]; const vw = v0.videoWidth || 1280, vh = v0.videoHeight || 720;
+              const sc = Math.min(1, QUAL.singleMaxW / vw);
+              canvas.width = Math.round(vw * sc); canvas.height = Math.round(vh * sc);
+            } else { canvas.width = QUAL.gridW; canvas.height = QUAL.gridH; }
+            ctx = canvas.getContext('2d', { alpha: false });
+            S = Math.max(1, canvas.height / 720);
+            supportsManual = (() => { try { const t = document.createElement('canvas').captureStream(0).getVideoTracks()[0]; return !!(t && t.requestFrame); } catch (e) { return false; } })();
+            stream = canvas.captureStream(supportsManual ? 0 : 30);
+            vtrack = stream.getVideoTracks()[0];
+            const recOpts = { videoBitsPerSecond: QUAL.bitrate };
+            if (fmt.mime) recOpts.mimeType = fmt.mime;
+            recorder = new MediaRecorder(stream, recOpts);
+            exportRecorder = recorder;
+            recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+            donePromise = new Promise(resolve => {
+              recorder.onstop = () => {
+                if (!exportCancel && chunks.length) {
+                  const blob = new Blob(chunks, { type: fmt.mime || 'video/webm' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  const safeName = (segs[0].displayTime || 'tesla').replace(/[:\s]/g, '-');
+                  const camTag = camList.length === 1 ? camList[0] : `${camList.length}cam`;
+                  a.download = `TeslaCam_${safeName}_${camTag}_${segs.length}seg.${fmt.ext}`;
+                  a.href = url; a.click();
+                  setTimeout(() => URL.revokeObjectURL(url), 1500);
+                }
+                resolve();
+              };
+            });
+            recorder.start();
+          }
+
+          // layout for this segment
+          const layout = [];
+          if (camList.length === 1) layout.push([camList[0], 0, 0, canvas.width, canvas.height]);
+          else {
+            const n = camList.length, cols = n <= 2 ? n : (n <= 4 ? 2 : 3), rows = Math.ceil(n / cols);
+            const cw = canvas.width / cols, ch = canvas.height / rows;
+            camList.forEach((cam, i) => layout.push([cam, (i % cols) * cw, Math.floor(i / cols) * ch, cw, ch]));
+          }
+
+          // per-segment timestamp base
+          const nameTs = ((seg.clips[tsBaseCam] || {}).name || '').match(/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/);
+          const segTsBase = parseTeslaBaseTime(nameTs ? nameTs[0] : seg.timestamp);
+
+          Object.values(exportVideos).forEach(v => { try { v.currentTime = 0; } catch (e) {} });
+          await Promise.all(Object.values(exportVideos).map(v => v.play().catch(() => {})));
+          const ref = exportVideos[camList[0]];
+          const segDur = (ref && isFinite(ref.duration) && ref.duration > 0) ? ref.duration : ((mergeTelem && mergeTelem.segDur[si]) || 60);
+          const goff = globalOffset;
+
+          await new Promise(resolve => {
+            let lastT = -1, stalls = 0, segStopped = false;
+            const segSafety = setTimeout(() => { segStopped = true; resolve(); }, (segDur * 1.6 + 12) * 1000);
+            const endSeg = () => { if (segStopped) return; segStopped = true; clearTimeout(segSafety); Object.values(exportVideos).forEach(v => { try { v.pause(); } catch (e) {} }); resolve(); };
+            const tick = () => {
+              if (segStopped) return;
+              if (exportCancel) { endSeg(); return; }
+              const refT = ref ? ref.currentTime : 0;
+              drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, wm, segTsBase, tsBaseCam, goff + refT);
+              if (supportsManual && vtrack.requestFrame) vtrack.requestFrame();
+              setExportProgress(Math.min(99, Math.round(((si + Math.min(1, refT / segDur)) / segs.length) * 100)), `匯出中… (${si + 1}/${segs.length})`);
+              if (Math.abs(refT - lastT) < 1e-3) { if (++stalls === 30 && ref && ref.paused) ref.play().catch(() => {}); }
+              else { stalls = 0; lastT = refT; }
+              if ((ref && ref.ended) || refT >= segDur - 0.04) { endSeg(); return; }
+              requestAnimationFrame(tick);
+            };
+            tick();
+          });
+
+          globalOffset += segDur;
+          Object.values(exportVideos).forEach(v => { try { holder.removeChild(v); } catch (e) {} });
+          urls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
+        }
+
+        setExportProgress(100, '完成中…');
+        if (recorder) { try { recorder.stop(); } catch (e) {} await donePromise; }
+
+        if (exportCancel) updateStatus('已取消匯出。', '');
+        else updateStatus('匯出完成！檔案已下載。', `${segs.length} 段合併`);
+        setTimeout(hideStatus, 4000);
+      } catch (err) {
+        console.error('Merge export error:', err);
+        alert('合併匯出失敗：' + (err && err.message));
+      } finally {
+        telemetry = savedTelemetry; telemetryEnabled = savedEnabled;
+        isExporting = false; exportRecorder = null;
+        document.getElementById('export-progress').classList.add('hidden');
+        setLeftPaneLocked(false);
+        try { document.body.removeChild(holder); } catch (e) {}
+        if (isPlaying) Object.values(videos).forEach(v => v.el.play().catch(() => {}));
+      }
+    }
+
     async function runExport(opts) {
+      if (opts.mergeSession) return runMergeExport({ cameras: opts.cameras, quality: opts.quality, segments: session.slice() });
       isExporting = true;
       exportCancel = false;
       setLeftPaneLocked(true);
@@ -2362,69 +2627,7 @@ message SeiMetadata {
         if (stopped) return;
         if (exportCancel) { stopExport(); return; }
 
-        ctx.fillStyle = '#0a0a0a';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        layout.forEach(([cam, x, y, w, h]) => {
-          const vid = exportVideos[cam];
-          if (vid && vid.readyState >= 2) drawContain(ctx, vid, x, y, w, h);
-        });
-
-        // Composite: label each cell with its camera. Top-row labels are pushed below a
-        // top watermark so they never overlap the timestamp.
-        if (camList.length > 1) {
-          const topShift = pos.includes('top') ? 56 * S : 0;
-          ctx.save();
-          ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-          ctx.font = `600 ${Math.round(15 * S)}px system-ui, sans-serif`;
-          layout.forEach(([cam, x, y, w, h]) => {
-            const label = CAMERA_LABELS[cam] || cam;
-            const lx = x + 12 * S, ly = y + 16 * S + (y < 1 ? topShift : 0);
-            const tw = ctx.measureText(label).width;
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.beginPath();
-            if (ctx.roundRect) ctx.roundRect(lx - 6 * S, ly - 12 * S, tw + 12 * S, 24 * S, 6 * S);
-            else ctx.rect(lx - 6 * S, ly - 12 * S, tw + 12 * S, 24 * S);
-            ctx.fill();
-            ctx.fillStyle = '#fff';
-            ctx.fillText(label, lx, ly);
-          });
-          ctx.restore();
-        }
-
-        // Watermark (timestamp / text / both), scaled to resolution
-        const tsStr = tsBase ? formatFootageClock(tsBase, exportVideos[tsBaseCam] ? exportVideos[tsBaseCam].currentTime : 0) : '';
-        let lines;
-        if (mode === 'text') lines = [text];
-        else if (mode === 'both') lines = [tsStr, text].filter(Boolean);
-        else lines = tsStr ? [tsStr] : [];
-        if (lines.length) {
-          ctx.save();
-          ctx.globalAlpha = opacity * 0.95;
-          ctx.fillStyle = '#ffffff';
-          ctx.font = `600 ${Math.round(22 * S)}px system-ui, -apple-system, sans-serif`;
-          ctx.shadowColor = 'rgba(0,0,0,0.7)';
-          ctx.shadowBlur = 6 * S;
-          ctx.shadowOffsetY = 2 * S;
-          const lineH = 28 * S;
-          const topPos = pos.includes('top');
-          let textX = canvas.width / 2;
-          let baseY = topPos ? 32 * S : canvas.height - 28 * S;
-          ctx.textAlign = 'center';
-          if (pos === 'bottom-right') { textX = canvas.width - 28 * S; ctx.textAlign = 'right'; }
-          if (pos === 'top-left') { textX = 28 * S; ctx.textAlign = 'left'; }
-          lines.forEach((ln, i) => {
-            const yy = topPos ? baseY + i * lineH : baseY - (lines.length - 1 - i) * lineH;
-            ctx.fillText(ln, textX, yy);
-          });
-          ctx.restore();
-        }
-
-        // Telemetry burn-in — same vertical panel layout as the on-screen HUD
-        if (telemetryEnabled && telemetry) {
-          const refTb = ref ? ref.currentTime : 0;
-          const sei = findSeiAt(refTb);
-          if (sei) drawTelemetryPanel(ctx, canvas, S, sei, refTb);
-        }
+        drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, { text, pos, opacity, mode }, tsBase, tsBaseCam);
 
         if (supportsManual && vtrack.requestFrame) vtrack.requestFrame();
 
