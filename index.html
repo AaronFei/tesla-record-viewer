@@ -2301,7 +2301,7 @@ message SeiMetadata {
         Object.values(exportVideos).forEach(v => { try { v.pause(); } catch (e) {} });
         try { recorder.stop(); } catch (e) {}
       };
-      const useRvfc = ref && typeof ref.requestVideoFrameCallback === 'function';
+      let lastT = -1, stalls = 0;
 
       const drawFrame = () => {
         if (stopped) return;
@@ -2354,14 +2354,16 @@ message SeiMetadata {
         const refT = ref ? ref.currentTime : 0;
         if (onProgress) onProgress(Math.min(1, (refT - startSec) / span));
 
+        // Keep playback alive if it stalls — otherwise the export would end short
+        if (Math.abs(refT - lastT) < 1e-3) { if (++stalls === 30 && ref && ref.paused) ref.play().catch(() => {}); }
+        else { stalls = 0; lastT = refT; }
+
         if ((ref && ref.ended) || refT >= stopAt - 0.04) { stopExport(); return; }
-        if (useRvfc) ref.requestVideoFrameCallback(drawFrame);
-        else setTimeout(() => requestAnimationFrame(drawFrame), 1000 / 30);
+        setTimeout(() => requestAnimationFrame(drawFrame), 1000 / 30);
       };
 
-      safety = setTimeout(stopExport, (span + 8) * 1000);
-      if (useRvfc) ref.requestVideoFrameCallback(drawFrame);
-      else drawFrame();
+      safety = setTimeout(stopExport, (span * 1.6 + 12) * 1000);
+      drawFrame();
 
       await donePromise;
       } finally {
