@@ -352,7 +352,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.7.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.7.1</div>
         </div>
       </div>
       
@@ -847,8 +847,9 @@
           cursor += 4;
           if (len < 1 || cursor + len > this.view.byteLength) break;
           const type = this.view.getUint8(cursor) & 0x1F;
-          const data = new Uint8Array(this.buffer.slice(cursor, cursor + len));
-          if (type === 6) pendingSei = this.decodeSei(data, SeiMetadata); // SEI
+          // Only SEI NALs are decoded; use a zero-copy view (not buffer.slice) so we don't copy
+          // the entire H.264 payload (tens of KB per coded-picture NAL, ~2000+/clip) just to read a type byte.
+          if (type === 6) pendingSei = this.decodeSei(new Uint8Array(this.buffer, cursor, len), SeiMetadata); // SEI
           else if (type === 5 || type === 1) { // IDR or slice = one coded picture
             frames.push({ index: frames.length, keyframe: type === 5, sei: pendingSei });
             pendingSei = null;
@@ -2301,10 +2302,14 @@ message SeiMetadata {
       return route._normPath;
     }
     // Find the route point at/just-before tSec (for the car marker).
+    // route.pts is sorted ascending by t — binary-search instead of an O(N) scan from index 0.
+    // (pts is the full ~36Hz GPS array, up to ~100k pts on long sessions; this runs per frame.)
     function routePointAt(route, tSec) {
-      let cur = route.pts[0];
-      for (const p of route.pts) { if (p.t <= tSec) cur = p; else break; }
-      return cur;
+      const p = route.pts;
+      if (!p || !p.length) return null;
+      let lo = 0, hi = p.length - 1, ans = 0;
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (p[mid].t <= tSec) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
+      return p[ans];
     }
     // Stroke a pre-built Path2D under a linear transform: canvas = src*scale + (tx,ty).
     // These map canvases are not DPR-scaled (canvas px == CSS px), so the base CTM is identity
@@ -2411,11 +2416,7 @@ message SeiMetadata {
     function currentGps(tSec) {
       if (!telemetry || !telemetry.route) return null;
       const r = telemetry.route;
-      if (r.pts && r.pts.length) {
-        let cur = r.pts[0];
-        for (const p of r.pts) { if (p.t <= tSec) cur = p; else break; }
-        return cur;
-      }
+      if (r.pts && r.pts.length) return routePointAt(r, tSec); // binary search (shared helper)
       return r.one || null;
     }
 
@@ -3204,7 +3205,7 @@ message SeiMetadata {
           if (exportStab) exportStab.reset(); // fresh clip → reset motion trajectory (avoid cross-clip jump)
 
           await new Promise(resolve => {
-            let lastT = -1, stalls = 0, segStopped = false;
+            let lastT = -1, lastDrawT = -1, stalls = 0, segStopped = false;
             // Pause-aware safety timer: its countdown is suspended while the tab is hidden
             // so a long background pause can't trip a premature end-of-segment.
             let safetyRemaining = ((localEnd - localStart) * 1.6 + 12) * 1000;
@@ -3219,8 +3220,13 @@ message SeiMetadata {
               if (exportCancel) { endSeg(); return; }
               if (exportPaused) { requestAnimationFrame(tick); return; } // frozen while backgrounded
               const refT = ref ? ref.currentTime : 0;
-              drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, wm, segTsBase, tsBaseCam, goff + refT);
-              if (supportsManual && vtrack.requestFrame) vtrack.requestFrame();
+              // Only re-composite + push a recorder frame when the source actually advanced — the rAF
+              // runs ~60Hz but the clip is ~36fps, so ~40% of frames would be identical re-composites.
+              if (refT !== lastDrawT) {
+                lastDrawT = refT;
+                drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, wm, segTsBase, tsBaseCam, goff + refT);
+                if (supportsManual && vtrack.requestFrame) vtrack.requestFrame();
+              }
               setExportProgress(Math.min(99, Math.round(((cumStart + refT - rangeStart) / recordedTotal) * 100)), `匯出中… (${si + 1}/${segs.length})`);
               if (Math.abs(refT - lastT) < 1e-3) { if (++stalls === 30 && ref && ref.paused) ref.play().catch(() => {}); }
               else { stalls = 0; lastT = refT; }
@@ -3430,18 +3436,21 @@ message SeiMetadata {
         try { recorder.stop(); } catch (e) {}
       };
       exportSegControl = { onPause: holdSafety, onResume: armSafety };
-      let lastT = -1, stalls = 0;
+      let lastT = -1, lastDrawT = -1, stalls = 0;
 
       const drawFrame = () => {
         if (stopped) return;
         if (exportCancel) { stopExport(); return; }
         if (exportPaused) { requestAnimationFrame(drawFrame); return; } // frozen while backgrounded
 
-        drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, { text, pos, opacity, mode }, tsBase, tsBaseCam);
-
-        if (supportsManual && vtrack.requestFrame) vtrack.requestFrame();
-
         const refT = ref ? ref.currentTime : 0;
+        // Only re-composite + push a recorder frame when the source advanced (rAF ~60Hz vs ~36fps source).
+        if (refT !== lastDrawT) {
+          lastDrawT = refT;
+          drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, { text, pos, opacity, mode }, tsBase, tsBaseCam);
+          if (supportsManual && vtrack.requestFrame) vtrack.requestFrame();
+        }
+
         if (onProgress) onProgress(Math.min(1, (refT - startSec) / span));
 
         // Keep playback alive if it stalls — otherwise the export would end short
@@ -3449,8 +3458,6 @@ message SeiMetadata {
         else { stalls = 0; lastT = refT; }
 
         if ((ref && ref.ended) || refT >= stopAt - 0.04) { stopExport(); return; }
-        // Run at the display refresh rate (~60fps) — higher than the ~36fps source, so
-        // every source frame is captured (occasional harmless duplicates), nothing dropped.
         requestAnimationFrame(drawFrame);
       };
 
