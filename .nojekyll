@@ -1,0 +1,2 @@
+# This file tells GitHub Pages not to process the site with Jekyll.
+# Required for some static sites to avoid 404 on files starting with underscore etc.

@@ -11,7 +11,9 @@
 
 ## 線上 Demo
 
-部署後會出現在 `https://<你的帳號>.github.io/tesla-record-viewer/`
+**https://aaronfei.github.io/tesla-record-viewer/**
+
+（首次部署後可能需要 1~3 分鐘建置時間）
 
 ## 特色
 
@@ -57,13 +59,11 @@ TeslaCam/
 
 ## 開發 / 部署到 GitHub Pages
 
-### 簡單部署 (推薦)
+本專案已由 GitHub CLI 自動建立 repo 並啟用 Pages（來源：main 分支根目錄）。
 
-把整個資料夾 push 到 GitHub 後：
-
-1. Settings → Pages → Source 選 `Deploy from a branch` → `main` / `docs` 或使用 GitHub Actions
-
-或使用 Vite 建置後部署。
+如需手動重新部署：
+1. 直接 push 到 main 分支即可自動更新 Pages。
+2. 或在 GitHub repo Settings → Pages 確認 Source 為 main / (root)。
 
 ### 本地開發
 
