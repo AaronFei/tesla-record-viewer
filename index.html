@@ -352,7 +352,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.2.1</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.2.2</div>
         </div>
       </div>
       
@@ -2294,7 +2294,7 @@ message SeiMetadata {
       }
       const syncMergeUI = () => {
         const merging = isSession && mergeChk.checked;
-        document.getElementById('export-segrange-wrap').style.display = merging ? '' : 'none';
+        document.getElementById('export-segrange-wrap').classList.toggle('hidden', !merging);
         document.getElementById('export-trim-wrap').style.display = merging ? 'none' : '';
       };
       mergeChk.onchange = syncMergeUI; syncMergeUI();
