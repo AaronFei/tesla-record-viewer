@@ -1276,7 +1276,7 @@
         highlightSession();
         updateSessionHeader();
         if (currentEvent._cardEl) currentEvent._cardEl.scrollIntoView({ block: 'nearest' });
-        await loadVideosForEvent(currentEvent);
+        await loadVideosForEvent(currentEvent, true); // keep the combined session telemetry
         isPlaying = false;
         togglePlayAll(); // auto-play the next segment
       } else {
@@ -1285,7 +1285,7 @@
       }
     }
     
-    async function loadVideosForEvent(eventData) {
+    async function loadVideosForEvent(eventData, preserveTelemetry = false) {
       // Revoke previous object URLs to avoid leaks on rapid event switching
       Object.values(videos).forEach(v => {
         try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {}
@@ -1397,8 +1397,10 @@
       // Set initial watermark text
       updateWatermarkVisibility();
 
-      // Telemetry is per-event and parsed on demand — reset for the new clip
-      resetTelemetry();
+      // Telemetry is parsed on demand. Keep it across a continuous-session segment advance
+      // (it's a combined timeline); only reset on a fresh selection.
+      if (!preserveTelemetry) resetTelemetry();
+      else updateTelemetryHUD(0);
 
       // Reset controls
       isPlaying = false;
@@ -1815,36 +1817,17 @@ message SeiMetadata {
       if (!currentEvent) return;
       setTelemetryBtn('loading');
       try {
-        const ok = await ensureProtobuf();
-        const SeiType = ok ? initTelemetryProto() : null;
-        if (!SeiType) { setTelemetryBtn('none'); return; }
-
         const cams = Object.keys(currentEvent.clips).sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
         const refCam = cams.includes('front') ? 'front' : cams[0];
-        const file = await getClipFile(currentEvent.clips[refCam]);
-        if (!file) { setTelemetryBtn('none'); return; }
-
         await new Promise(r => setTimeout(r, 30)); // let the "loading" state paint
-        const buf = await file.arrayBuffer();
-        const mp4 = new DashcamMP4(buf);
-        const config = mp4.getConfig();
-        const frames = mp4.parseFrames(SeiType);
-        const durations = config.durations || [];
 
-        const samples = [];
-        let t = 0;
-        for (let i = 0; i < frames.length; i++) {
-          if (frames[i].sei) samples.push({ t, sei: frames[i].sei });
-          t += (durations[i] || 27.78) / 1000;
-        }
-        if (!samples.length) { telemetry = null; setTelemetryBtn('none'); updateTelemetryHUD(); return; }
+        // A multi-segment continuous session is parsed as ONE combined timeline so the
+        // GPS path and telemetry are continuous across the whole run, not per-segment.
+        const segs = (session && session.length > 1) ? session : [currentEvent];
+        const t = await parseSessionTelemetry(segs, refCam);
+        if (!t) { telemetry = null; telemetryEnabled = false; setTelemetryBtn('none'); updateTelemetryHUD(); return; }
 
-        telemetry = { samples, cam: refCam };
-        telemetry.route = buildRoute(samples);
-        // Detect accelerator scale once (0..1 vs 0..100) so the bar doesn't flicker
-        let accelMax = 0;
-        for (const s of samples) accelMax = Math.max(accelMax, s.sei.acceleratorPedalPosition || 0);
-        telemetry.accelScale = accelMax <= 1.5 ? 1 : 100;
+        telemetry = t; telemetry.cam = refCam;
         telemetryEnabled = true;
         setTelemetryBtn('on');
         applyTelemVisibility();
@@ -1855,6 +1838,17 @@ message SeiMetadata {
         setTelemetryBtn('none');
         updateTelemetryHUD();
       }
+    }
+
+    // Cumulative time of segments before the current one — converts a per-segment time to
+    // the combined session timeline used for telemetry lookups.
+    function telemLookupTime(localT) {
+      if (telemetry && telemetry.segDur && session && session.length > 1) {
+        let off = 0;
+        for (let i = 0; i < sessionIdx && i < telemetry.segDur.length; i++) off += telemetry.segDur[i] || 0;
+        return off + localT;
+      }
+      return localT;
     }
 
     function findSeiAt(tSec) {
@@ -1884,7 +1878,8 @@ message SeiMetadata {
       hud.classList.toggle('hidden', !show);
       if (mapEl) mapEl.classList.toggle('hidden', !(show && telemShow.map && hasGps));
       if (!show) return;
-      const at = tSec != null ? tSec : (masterVideo ? masterVideo.currentTime : 0);
+      const localAt = tSec != null ? tSec : (masterVideo ? masterVideo.currentTime : 0);
+      const at = telemLookupTime(localAt); // combined-session time when a run is selected
       const sei = findSeiAt(at);
       if (!sei) return;
 
@@ -2331,11 +2326,16 @@ message SeiMetadata {
       const chunks = [];
 
       try {
-        // Build combined telemetry across all segments (continuous GPS / timeline)
+        // Combined telemetry across all segments (continuous GPS / timeline). Reuse the
+        // session telemetry already parsed during playback if available, else parse now.
         let mergeTelem = null;
         if (wantTelem) {
-          setExportProgress(0, '解析遙測…');
-          mergeTelem = await parseSessionTelemetry(segs, tsBaseCam);
+          if (savedTelemetry && savedTelemetry.segDur && savedTelemetry.segDur.length === segs.length) {
+            mergeTelem = savedTelemetry;
+          } else {
+            setExportProgress(0, '解析遙測…');
+            mergeTelem = await parseSessionTelemetry(segs, tsBaseCam);
+          }
         }
         telemetry = mergeTelem; telemetryEnabled = !!mergeTelem;
 
