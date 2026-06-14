@@ -677,10 +677,19 @@
         <span>合成為單一畫面<span class="block text-[11px] text-zinc-500">勾選：多鏡頭合併成一個畫面。<b>取消勾選</b>：每個鏡頭<b>分別匯出</b>成各自的檔案（原生解析度）。</span></span>
       </label>
 
-      <label id="export-merge-wrap" class="hidden flex items-start gap-2 text-sm mb-4 cursor-pointer select-none">
+      <label id="export-merge-wrap" class="hidden flex items-start gap-2 text-sm mb-3 cursor-pointer select-none">
         <input type="checkbox" id="export-merge" checked class="accent-[#e82127] mt-0.5">
-        <span>連續合併輸出（<span id="export-merge-count">0</span> 段串成一支）<span class="block text-[11px] text-zinc-500">把目前選取的連續分段接成一支影片；GPS 與遙測也會串成連續的。取消勾選則只輸出目前這一段。</span></span>
+        <span>連續合併輸出（<span id="export-merge-count">0</span> 段串成一支）<span class="block text-[11px] text-zinc-500">把選取的連續分段接成一支影片；GPS 與遙測也會串成連續的。取消勾選則只輸出目前這一段。</span></span>
       </label>
+
+      <div id="export-segrange-wrap" class="hidden mb-4">
+        <div class="flex justify-between text-xs text-zinc-400 mb-1">
+          <span>段範圍（只輸出這幾段）</span>
+          <span class="font-mono text-zinc-300">第 <span id="export-seg-start-label">1</span> → <span id="export-seg-end-label">1</span> 段</span>
+        </div>
+        <input type="range" id="export-seg-start" min="1" max="1" step="1" value="1" oninput="onSegRangeInput('start')" class="w-full accent-[#e82127]">
+        <input type="range" id="export-seg-end" min="1" max="1" step="1" value="1" oninput="onSegRangeInput('end')" class="w-full accent-[#e82127]">
+      </div>
 
       <div id="export-trim-wrap" class="mb-4">
         <div class="flex justify-between text-xs text-zinc-400 mb-1">
@@ -2119,8 +2128,19 @@ message SeiMetadata {
       if (isSession) document.getElementById('export-merge-count').textContent = session.length;
       const mergeChk = document.getElementById('export-merge');
       mergeChk.checked = isSession;
-      const syncTrim = () => { document.getElementById('export-trim-wrap').style.display = (isSession && mergeChk.checked) ? 'none' : ''; };
-      mergeChk.onchange = syncTrim; syncTrim();
+      // Segment-range sliders (which segments of the session to merge)
+      if (isSession) {
+        const ss = document.getElementById('export-seg-start'), se = document.getElementById('export-seg-end');
+        ss.max = session.length; se.max = session.length;
+        ss.value = 1; se.value = session.length;
+        updateSegRangeLabels();
+      }
+      const syncMergeUI = () => {
+        const merging = isSession && mergeChk.checked;
+        document.getElementById('export-segrange-wrap').style.display = merging ? '' : 'none';
+        document.getElementById('export-trim-wrap').style.display = merging ? 'none' : '';
+      };
+      mergeChk.onchange = syncMergeUI; syncMergeUI();
 
       // Trim range defaults: 0 → clip duration
       const dur = (masterVideo && isFinite(masterVideo.duration) && masterVideo.duration > 0) ? masterVideo.duration : 60;
@@ -2138,6 +2158,17 @@ message SeiMetadata {
       document.getElementById('export-start-label').textContent = formatTime(+document.getElementById('export-start').value);
       document.getElementById('export-end-label').textContent = formatTime(+document.getElementById('export-end').value);
     }
+    function updateSegRangeLabels() {
+      document.getElementById('export-seg-start-label').textContent = document.getElementById('export-seg-start').value;
+      document.getElementById('export-seg-end-label').textContent = document.getElementById('export-seg-end').value;
+    }
+    function onSegRangeInput(which) {
+      const ss = document.getElementById('export-seg-start'), se = document.getElementById('export-seg-end');
+      let s = +ss.value, e = +se.value;
+      if (s > e) { if (which === 'start') se.value = s; else ss.value = e; }
+      updateSegRangeLabels();
+    }
+
     function onExportTrimInput(which) {
       const startEl = document.getElementById('export-start');
       const endEl = document.getElementById('export-end');
@@ -2157,8 +2188,10 @@ message SeiMetadata {
       const startSec = +document.getElementById('export-start').value;
       const endSec = +document.getElementById('export-end').value;
       const mergeSession = !!(session && session.length > 1) && document.getElementById('export-merge').checked;
+      let segRange = null;
+      if (mergeSession) segRange = [+document.getElementById('export-seg-start').value, +document.getElementById('export-seg-end').value];
       closeExportModal();
-      runExport({ cameras: checked, quality, composite, startSec, endSec, mergeSession });
+      runExport({ cameras: checked, quality, composite, startSec, endSec, mergeSession, segRange });
     }
 
     function setExportProgress(pct, title) {
@@ -2568,7 +2601,10 @@ message SeiMetadata {
     }
 
     async function runExport(opts) {
-      if (opts.mergeSession) return runMergeExport({ cameras: opts.cameras, quality: opts.quality, segments: session.slice() });
+      if (opts.mergeSession) {
+        const r = opts.segRange || [1, session.length];
+        return runMergeExport({ cameras: opts.cameras, quality: opts.quality, segments: session.slice(r[0] - 1, r[1]) });
+      }
       isExporting = true;
       exportCancel = false;
       setLeftPaneLocked(true);
