@@ -1722,27 +1722,81 @@ message SeiMetadata {
       return { hasGps: true, pts };
     }
 
+    // Online: fetch OpenStreetMap tiles covering the route as a background image.
+    // Offline / failure / tainted: returns null and the minimap falls back to path-only.
+    async function buildMapBackground(route) {
+      try {
+        if (!route || !route.hasGps || !route.pts || route.pts.length < 2) return null;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
+        let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+        for (const p of route.pts) { minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat); minLng = Math.min(minLng, p.lng); maxLng = Math.max(maxLng, p.lng); }
+        const lon2tx = (lon, z) => (lon + 180) / 360 * Math.pow(2, z);
+        const lat2ty = (lat, z) => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z); };
+        let z = 17;
+        for (; z >= 2; z--) {
+          const nx = Math.floor(lon2tx(maxLng, z)) - Math.floor(lon2tx(minLng, z)) + 1;
+          const ny = Math.floor(lat2ty(minLat, z)) - Math.floor(lat2ty(maxLat, z)) + 1;
+          if (nx <= 4 && ny <= 4) break;
+        }
+        const minTx = Math.floor(lon2tx(minLng, z)), maxTx = Math.floor(lon2tx(maxLng, z));
+        const minTy = Math.floor(lat2ty(maxLat, z)), maxTy = Math.floor(lat2ty(minLat, z));
+        const nx = maxTx - minTx + 1, ny = maxTy - minTy + 1;
+        if (nx < 1 || ny < 1 || nx > 6 || ny > 6) return null;
+        const comp = document.createElement('canvas'); comp.width = nx * 256; comp.height = ny * 256;
+        const cctx = comp.getContext('2d');
+        const loads = [];
+        for (let tx = minTx; tx <= maxTx; tx++) for (let ty = minTy; ty <= maxTy; ty++) {
+          loads.push(new Promise(res => {
+            const im = new Image(); im.crossOrigin = 'anonymous';
+            im.onload = () => { try { cctx.drawImage(im, (tx - minTx) * 256, (ty - minTy) * 256); } catch (e) {} res(true); };
+            im.onerror = () => res(false);
+            im.src = `https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`;
+          }));
+        }
+        const results = await Promise.all(loads);
+        if (!results.some(Boolean)) return null;
+        const project = (lat, lng) => ({ px: (lon2tx(lng, z) - minTx) * 256, py: (lat2ty(lat, z) - minTy) * 256 });
+        let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
+        for (const p of route.pts) { const q = project(p.lat, p.lng); mnx = Math.min(mnx, q.px); mny = Math.min(mny, q.py); mxx = Math.max(mxx, q.px); mxy = Math.max(mxy, q.py); }
+        const pad = Math.max(22, (mxx - mnx) * 0.12, (mxy - mny) * 0.12);
+        const cx = (mnx + mxx) / 2, cy = (mny + mxy) / 2, half = Math.max((mxx - mnx) / 2, (mxy - mny) / 2) + pad;
+        return { img: comp, cropX: cx - half, cropY: cy - half, cropSize: half * 2, project };
+      } catch (e) { return null; }
+    }
+
+    function drawRouteLine(ctx, route, tSec, S, toXY) {
+      if (!route.pts || route.pts.length < 2) return;
+      ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3 * S; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.beginPath(); route.pts.forEach((p, i) => { const c = toXY(p); i ? ctx.lineTo(c.X, c.Y) : ctx.moveTo(c.X, c.Y); }); ctx.stroke();
+      let cur = route.pts[0]; for (const p of route.pts) { if (p.t <= tSec) cur = p; else break; }
+      const c = toXY(cur);
+      ctx.fillStyle = '#e82127'; ctx.beginPath(); ctx.arc(c.X, c.Y, 4.5 * S, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 * S; ctx.stroke();
+    }
+
+    // Paint a route minimap into [x,y,size] — with an OSM map background if available, else dark path-only.
+    function paintRouteMap(ctx, x, y, size, route, tSec, S, mapBg) {
+      ctx.save();
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x, y, size, size, 10 * S); else ctx.rect(x, y, size, size);
+      ctx.clip();
+      if (mapBg && mapBg.img) {
+        ctx.drawImage(mapBg.img, mapBg.cropX, mapBg.cropY, mapBg.cropSize, mapBg.cropSize, x, y, size, size);
+        drawRouteLine(ctx, route, tSec, S, p => { const q = mapBg.project(p.lat, p.lng); return { X: x + (q.px - mapBg.cropX) / mapBg.cropSize * size, Y: y + (q.py - mapBg.cropY) / mapBg.cropSize * size }; });
+      } else {
+        ctx.fillStyle = 'rgba(15,17,21,0.92)'; ctx.fillRect(x, y, size, size);
+        const pad = 9 * S;
+        drawRouteLine(ctx, route, tSec, S, p => ({ X: x + pad + p.nx * (size - 2 * pad), Y: y + pad + p.ny * (size - 2 * pad) }));
+      }
+      ctx.restore();
+    }
+
     function drawMinimap(tSec) {
       const canvas = document.getElementById('t-map');
       if (!canvas || !telemetry || !telemetry.route || !telemetry.route.hasGps) return;
-      const route = telemetry.route;
       const ctx = canvas.getContext('2d');
-      const W = canvas.width, H = canvas.height, pad = 10;
-      ctx.clearRect(0, 0, W, H);
-      const X = nx => pad + nx * (W - 2 * pad);
-      const Y = ny => pad + ny * (H - 2 * pad);
-      if (route.pts.length >= 2) {
-        ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-        ctx.beginPath();
-        route.pts.forEach((p, i) => { const x = X(p.nx), y = Y(p.ny); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-        ctx.stroke();
-        // current position = last point with t <= tSec
-        let cur = route.pts[0];
-        for (const p of route.pts) { if (p.t <= tSec) cur = p; else break; }
-        ctx.fillStyle = '#e82127';
-        ctx.beginPath(); ctx.arc(X(cur.nx), Y(cur.ny), 4.5, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
-      }
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      paintRouteMap(ctx, 0, 0, canvas.width, telemetry.route, tSec, canvas.width / 120, telemetry.mapBg);
     }
 
     function currentGps(tSec) {
@@ -2113,27 +2167,10 @@ message SeiMetadata {
       ctx.textBaseline = 'alphabetic';
     }
 
-    // GPS path-trace minimap for export burn-in
+    // GPS minimap for export burn-in (OSM background if available, else dark path-only)
     function drawExportMinimap(ctx, x, y, size, route, tSec, S) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(15,17,21,0.92)';
-      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, size, size, 8 * S); ctx.fill(); }
-      else ctx.fillRect(x, y, size, size);
-      if (route && route.hasGps && route.pts.length >= 2) {
-        const pad = 8 * S;
-        const X = nx => x + pad + nx * (size - 2 * pad);
-        const Y = ny => y + pad + ny * (size - 2 * pad);
-        ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2 * S; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-        ctx.beginPath();
-        route.pts.forEach((p, i) => { const px = X(p.nx), py = Y(p.ny); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
-        ctx.stroke();
-        let cur = route.pts[0];
-        for (const p of route.pts) { if (p.t <= tSec) cur = p; else break; }
-        ctx.fillStyle = '#e82127';
-        ctx.beginPath(); ctx.arc(X(cur.nx), Y(cur.ny), 4 * S, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 * S; ctx.stroke();
-      }
-      ctx.restore();
+      if (!route || !route.hasGps) return;
+      paintRouteMap(ctx, x, y, size, route, tSec, S, telemetry && telemetry.mapBg);
     }
 
     // Rounded pill on canvas; returns its width
@@ -2296,7 +2333,9 @@ message SeiMetadata {
         offset += dur;
       }
       if (!samples.length) return null;
-      return { samples, route: buildRoute(samples), accelScale: accelMax <= 1.5 ? 1 : 100, segDur };
+      const route = buildRoute(samples);
+      const mapBg = await buildMapBackground(route); // OSM tiles when online, else null
+      return { samples, route, accelScale: accelMax <= 1.5 ? 1 : 100, segDur, mapBg };
     }
 
     // Export a whole continuous session merged into one file (one recorder across all segments)
