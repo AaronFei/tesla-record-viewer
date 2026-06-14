@@ -535,14 +535,7 @@
           <i id="t-blink-left" class="fa-solid fa-caret-left tblink" title="左方向燈"></i>
           <div id="tw-speed" class="tspeed"><span id="t-speed-val">0</span><span class="tunit">km/h</span></div>
           <i id="t-blink-right" class="fa-solid fa-caret-right tblink" title="右方向燈"></i>
-          <svg id="tw-steer" class="tsteer" viewBox="0 0 40 40" width="34" height="34" title="方向盤">
-            <g stroke="currentColor" fill="none">
-              <circle cx="20" cy="20" r="12.9" stroke-width="4.2"/>
-              <line x1="6.5" y1="20" x2="33.5" y2="20" stroke-width="4.5" stroke-linecap="round"/>
-              <line x1="20" y1="20" x2="20" y2="33.5" stroke-width="4.5" stroke-linecap="round"/>
-            </g>
-            <circle cx="20" cy="20" r="3.45" fill="currentColor"/>
-          </svg>
+          <img id="tw-steer" class="tsteer" width="32" height="32" alt="方向盤" title="方向盤">
           <span id="t-gear" class="tpill tgear">P</span>
           <span id="t-ap" class="tpill tap" style="display:none">Autopilot</span>
           <span id="t-brake" class="tpill tbrake" style="display:none">煞車</span>
@@ -1580,6 +1573,17 @@ message SeiMetadata {
       return Math.max(0, Math.min(1, (sei.acceleratorPedalPosition || 0) / scale));
     }
 
+    // Steering-wheel icon (the user's PNG, recoloured + transparent) — shown rotated.
+    const STEER_IMG = 'data:image/png;base64,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';
+    const steerImage = new Image();
+    let steerReady = false;
+    steerImage.onload = () => { steerReady = true; };
+    steerImage.src = STEER_IMG;
+    (function () {
+      const si = document.getElementById('tw-steer');
+      if (si && si.tagName === 'IMG') si.src = STEER_IMG;
+    })();
+
     // Which telemetry widgets to overlay (user-configurable, persisted)
     const TELEM_FIELDS = [
       { key: 'speed', label: '時速', def: true },
@@ -1993,19 +1997,21 @@ message SeiMetadata {
       ctx.drawImage(vid, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
     }
 
-    // Draw a solid steering wheel (rim + horizontal spoke + bottom spoke + hub), rotated
-    function drawYoke(ctx, cx, cy, R, angleRad, lw, color) {
+    // Steering wheel for export burn-in: draw the rotated PNG (fallback to a vector wheel)
+    function drawYoke(ctx, cx, cy, r, angleRad, lw, color) {
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate(angleRad || 0);
-      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineJoin = 'round';
-      const rIn = R * 0.72, rimW = R - rIn, spoke = R * 0.3;
-      ctx.lineCap = 'butt'; ctx.lineWidth = rimW;                                 // rim (annulus)
-      ctx.beginPath(); ctx.arc(0, 0, (R + rIn) / 2, 0, Math.PI * 2); ctx.stroke();
-      ctx.lineCap = 'round'; ctx.lineWidth = spoke;
-      ctx.beginPath(); ctx.moveTo(-R * 0.9, 0); ctx.lineTo(R * 0.9, 0); ctx.stroke(); // horizontal spoke
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, R * 0.9); ctx.stroke();        // bottom spoke
-      ctx.beginPath(); ctx.arc(0, 0, R * 0.23, 0, Math.PI * 2); ctx.fill();           // hub
+      if (steerReady) {
+        const s = r * 2.15;
+        ctx.drawImage(steerImage, -s / 2, -s / 2, s, s);
+      } else {
+        ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = lw; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-r, 0); ctx.lineTo(r, 0); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-r * 0.34, r * 0.12); ctx.lineTo(r * 0.34, r * 0.12); ctx.lineTo(0, r * 0.9); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.arc(0, 0, r * 0.26, 0, Math.PI * 2); ctx.fill();
+      }
       ctx.restore();
     }
 
