@@ -254,12 +254,10 @@
     }
     #telemetry-map { display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; }
     #telemetry-map.hidden, #telemetry-follow.hidden { display: none; }
-    #telemetry-map #t-map { width: 130px; height: 130px; border-radius: 12px; background: #0f1115; border: 1px solid #3f3f46; pointer-events: auto; cursor: zoom-in; }
-    #telemetry-map.expanded #t-map { cursor: zoom-out; }
+    #telemetry-map #t-map, #telemetry-follow #t-follow { width: 160px; height: 160px; border-radius: 12px; background: #0f1115; border: 1px solid #3f3f46; pointer-events: auto; cursor: zoom-in; }
+    #telemetry-map.expanded #t-map, #telemetry-follow.expanded #t-follow { cursor: zoom-out; }
     #telemetry-map .tmaplink { pointer-events: auto; font-size: 11px; color: #93c5fd; text-decoration: underline; background: rgba(0,0,0,0.5); padding: 1px 8px; border-radius: 6px; }
     #telemetry-map .tmaplink:hover { color: #fff; }
-    #telemetry-follow #t-follow { width: 230px; height: 230px; border-radius: 14px; background: #0f1115; border: 1px solid #3f3f46; pointer-events: auto; cursor: zoom-in; }
-    #telemetry-follow.expanded #t-follow { cursor: zoom-out; }
 
     /* ---- Spotlight player (main view + thumbnail strip) ---- */
     #player-stage {
@@ -352,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.2.2</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.2.3</div>
         </div>
       </div>
       
@@ -582,10 +580,10 @@
         <!-- GPS maps (bottom-right): street-follow view + whole-route minimap -->
         <div id="telemetry-maps">
           <div id="telemetry-follow" class="hidden">
-            <canvas id="t-follow" width="230" height="230" title="街道導航圖"></canvas>
+            <canvas id="t-follow" width="160" height="160" onclick="toggleMapExpand('follow')" title="街道導航圖（點擊放大／縮小）"></canvas>
           </div>
           <div id="telemetry-map" class="hidden">
-            <canvas id="t-map" width="130" height="130" onclick="toggleMapExpand()" title="點擊放大／縮小"></canvas>
+            <canvas id="t-map" width="160" height="160" onclick="toggleMapExpand('map')" title="GPS 路徑圖（點擊放大／縮小）"></canvas>
             <a id="t-map-link" href="#" target="_blank" rel="noopener" class="tmaplink">Google 地圖 ↗</a>
           </div>
         </div>
@@ -2018,15 +2016,17 @@ message SeiMetadata {
     }
 
     // Click the minimap to enlarge it (and back)
-    function toggleMapExpand() {
-      const wrap = document.getElementById('telemetry-map');
-      const canvas = document.getElementById('t-map');
+    // Click either GPS map (kind = 'map' | 'follow') to enlarge it (and back)
+    function toggleMapExpand(kind) {
+      const wrap = document.getElementById(kind === 'follow' ? 'telemetry-follow' : 'telemetry-map');
+      const canvas = document.getElementById(kind === 'follow' ? 't-follow' : 't-map');
       if (!wrap || !canvas) return;
       const expanded = wrap.classList.toggle('expanded');
-      const sz = expanded ? Math.round(Math.min(380, window.innerHeight * 0.6, window.innerWidth * 0.6)) : 130;
+      const sz = expanded ? Math.round(Math.min(420, window.innerHeight * 0.6, window.innerWidth * 0.6)) : 160;
       canvas.width = sz; canvas.height = sz;
       canvas.style.width = sz + 'px'; canvas.style.height = sz + 'px';
-      drawMinimap(telemLookupTime(masterVideo ? masterVideo.currentTime : 0));
+      const at = telemLookupTime(masterVideo ? masterVideo.currentTime : 0);
+      if (kind === 'follow') drawFollowMap(at); else drawMinimap(at);
     }
 
     function currentGps(tSec) {
