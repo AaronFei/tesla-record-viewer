@@ -350,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.4.3</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.4.4</div>
         </div>
       </div>
       
@@ -1311,6 +1311,7 @@
         if (currentEvent._cardEl) currentEvent._cardEl.scrollIntoView({ block: 'nearest' });
         if (preloadedSet && preloadedSet.key === currentEvent.key) {
           const set = preloadedSet; preloadedSet = null;
+          await ensureSetReady(set, 600); // hold last frame until the next set can play smoothly
           mountVideoSet(set, true); // instant, no black gap
         } else {
           await loadVideosForEvent(currentEvent, true); // keep the combined session telemetry
@@ -1451,6 +1452,7 @@
     // ===== Seamless segment transitions: preload the next segment off-screen =====
     let preloadedSet = null;     // { key, vids, cameras } prebuilt + loading
     let preloadHolder = null;
+    let prerollDone = false;     // whether we've re-warmed the next set near this segment's end
 
     function getPreloadHolder() {
       if (!preloadHolder) {
@@ -1541,7 +1543,44 @@
       resetPreload();
       buildSegmentVideoSet(nextEv).then(set => { preloadedSet = set; }).catch(() => {});
     }
-    function resetPreload() { discardSet(preloadedSet); preloadedSet = null; }
+    function resetPreload() { discardSet(preloadedSet); preloadedSet = null; prerollDone = false; }
+
+    // Just-in-time re-warm: while a video sits paused & off-screen for ~60s, the browser
+    // suspends/evicts its decode pipeline. So in the last ~1.2s of the current segment we
+    // re-wake the preloaded set's decoders, so they're hot (not cold) at the cut → no stutter.
+    function maybePrerollNext() {
+      if (prerollDone || !preloadedSet || !masterVideo || !masterVideo.duration) return;
+      if (!session || sessionIdx >= session.length - 1) return;
+      if (masterVideo.currentTime < masterVideo.duration - 1.2) return;
+      prerollDone = true;
+      Object.values(preloadedSet.vids).forEach(v => {
+        const el = v && v.el; if (!el) return;
+        try {
+          if (el.readyState < 3) {
+            const p = el.play();
+            if (p && p.then) p.then(() => { try { el.pause(); if (el.currentTime > 0.04) el.currentTime = 0; } catch (e) {} }).catch(() => {});
+          } else if (el.currentTime > 0.04) { el.currentTime = 0; }
+        } catch (e) {}
+      });
+    }
+
+    // Wait (up to maxWaitMs) for a prebuilt set's master to be smoothly playable. The old
+    // segment's last frame stays on screen meanwhile, so a slow next-set freezes briefly
+    // instead of stuttering mid-playback.
+    function ensureSetReady(set, maxWaitMs) {
+      return new Promise(resolve => {
+        const cam = set.cameras.includes('front') ? 'front' : set.cameras[0];
+        const el = ((set.vids[cam] || Object.values(set.vids)[0]) || {}).el;
+        if (!el || el.readyState >= 3) return resolve();
+        let done = false;
+        const finish = () => { if (done) return; done = true; el.removeEventListener('canplay', finish); resolve(); };
+        el.addEventListener('canplay', finish);
+        setTimeout(finish, maxWaitMs);
+        // Nudge a cold/suspended decoder via a frame-0 re-seek — this forces decoding without
+        // advancing playback (so no play()/pause() race with the upcoming mount+play).
+        try { el.currentTime = 0.0001; } catch (e) {}
+      });
+    }
 
     // Promote a camera to the main stage; the rest become the thumbnail strip.
     // Re-parenting a playing (muted) <video> keeps it playing, so sync is preserved.
@@ -1594,6 +1633,7 @@
 
         updateTimestampOverlays();
         updateTelemetryHUD(masterVideo.currentTime);
+        maybePrerollNext();
       }
 
       masterVideo.addEventListener('timeupdate', updateUI);
