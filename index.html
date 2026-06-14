@@ -350,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.7.4</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.8.0</div>
         </div>
       </div>
       
@@ -2847,6 +2847,32 @@ message SeiMetadata {
       ctx.textAlign = 'center';
     }
 
+    // Spatial "surround" placement for the composite grid (col, row) — intuitive like looking
+    // around the car: sides on the sides, front top-centre, back bottom-centre.
+    //   左B柱  前鏡頭  右B柱
+    //   左後視鏡 後鏡頭 右後視鏡
+    const SPATIAL_POS = {
+      left_pillar: [0, 0], front: [1, 0], right_pillar: [2, 0],
+      left_repeater: [0, 1], back: [1, 1], rear: [1, 1], right_repeater: [2, 1],
+    };
+    // Build the composite cell layout [[cam, x, y, w, h], ...] for a WxH canvas.
+    function computeCompositeLayout(camList, W, H) {
+      if (camList.length === 1) return [[camList[0], 0, 0, W, H]];
+      // Use the spatial layout when every camera has a known position and none collide; empty
+      // rows/columns are trimmed so subsets stay compact. Otherwise fall back to a packed grid.
+      const cells = camList.map(c => SPATIAL_POS[c] && SPATIAL_POS[c].join(','));
+      if (camList.every(c => SPATIAL_POS[c]) && new Set(cells).size === cells.length) {
+        const usedCols = [...new Set(camList.map(c => SPATIAL_POS[c][0]))].sort((a, b) => a - b);
+        const usedRows = [...new Set(camList.map(c => SPATIAL_POS[c][1]))].sort((a, b) => a - b);
+        const ci = new Map(usedCols.map((c, i) => [c, i])), ri = new Map(usedRows.map((r, i) => [r, i]));
+        const cw = W / usedCols.length, ch = H / usedRows.length;
+        return camList.map(c => { const [col, row] = SPATIAL_POS[c]; return [c, ci.get(col) * cw, ri.get(row) * ch, cw, ch]; });
+      }
+      const n = camList.length, cols = n <= 2 ? n : (n <= 4 ? 2 : 3), rows = Math.ceil(n / cols);
+      const cw = W / cols, ch = H / rows;
+      return camList.map((cam, i) => [cam, (i % cols) * cw, Math.floor(i / cols) * ch, cw, ch]);
+    }
+
     // Shared per-frame draw for export (single + merged). telemTime overrides the time used
     // for telemetry lookup (the merged export passes a global session time so GPS is continuous).
     function drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, wm, tsBase, tsBaseCam, telemTime) {
@@ -3070,14 +3096,8 @@ message SeiMetadata {
             recorder.start();
           }
 
-          // layout for this segment
-          const layout = [];
-          if (camList.length === 1) layout.push([camList[0], 0, 0, canvas.width, canvas.height]);
-          else {
-            const n = camList.length, cols = n <= 2 ? n : (n <= 4 ? 2 : 3), rows = Math.ceil(n / cols);
-            const cw = canvas.width / cols, ch = canvas.height / rows;
-            camList.forEach((cam, i) => layout.push([cam, (i % cols) * cw, Math.floor(i / cols) * ch, cw, ch]));
-          }
+          // layout for this segment (spatial surround grid)
+          const layout = computeCompositeLayout(camList, canvas.width, canvas.height);
 
           // per-segment timestamp base
           const nameTs = ((seg.clips[tsBaseCam] || {}).name || '').match(/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/);
@@ -3241,7 +3261,7 @@ message SeiMetadata {
 
       // Canvas size + layout
       const canvas = document.createElement('canvas');
-      let layout = [];
+      let layout;
       if (camList.length === 1) {
         const v0 = exportVideos[camList[0]];
         const vw = v0.videoWidth || 1280, vh = v0.videoHeight || 720;
@@ -3252,11 +3272,7 @@ message SeiMetadata {
       } else {
         canvas.width = QUAL.gridW;
         canvas.height = QUAL.gridH;
-        const n = camList.length;
-        const cols = n <= 2 ? n : (n <= 4 ? 2 : 3);
-        const rows = Math.ceil(n / cols);
-        const cellW = canvas.width / cols, cellH = canvas.height / rows;
-        camList.forEach((cam, i) => layout.push([cam, (i % cols) * cellW, Math.floor(i / cols) * cellH, cellW, cellH]));
+        layout = computeCompositeLayout(camList, canvas.width, canvas.height); // spatial surround grid
       }
       const ctx = canvas.getContext('2d', { alpha: false });
       const S = Math.max(1, canvas.height / 720); // scale overlays with resolution
