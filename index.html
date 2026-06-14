@@ -352,7 +352,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.7.2</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.7.3</div>
         </div>
       </div>
       
@@ -537,12 +537,6 @@
             <button onclick="clearMarks()" id="mark-clear" class="hidden px-1 py-1 text-zinc-500 hover:text-zinc-200" title="清除標記"><i class="fa-solid fa-xmark"></i></button>
           </div>
 
-          <!-- Front-camera digital stabilization (off by default) -->
-          <div class="flex items-center text-xs pl-3 border-l border-zinc-800">
-            <button onclick="toggleStabilize()" id="stab-btn" title="前鏡頭去震（數位防手震，會稍微放大裁切、損失一點畫質）"
-                    class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 flex items-center gap-1.5"><i class="fa-solid fa-wand-magic-sparkles"></i>穩定</button>
-          </div>
-
           <!-- Actions (pushed to the right) -->
           <div class="flex items-center gap-2 ml-auto pl-3 border-l border-zinc-800">
             <button onclick="onTelemetryBtn()" id="telemetry-btn"
@@ -709,10 +703,6 @@
         <span>合成為單一畫面<span class="block text-[11px] text-zinc-500">勾選：多鏡頭合併成一個畫面。<b>取消勾選</b>：每個鏡頭<b>分別匯出</b>成各自的檔案（原生解析度）。</span></span>
       </label>
 
-      <label id="export-stabilize-wrap" class="flex items-start gap-2 text-sm mb-4 cursor-pointer select-none">
-        <input type="checkbox" id="export-stabilize" class="accent-[#e82127] mt-0.5">
-        <span>前鏡頭去震（穩定）<span class="block text-[11px] text-zinc-500">對前鏡頭套用數位防手震，會稍微放大裁切、損失一點畫質。只影響前鏡頭畫面。</span></span>
-      </label>
 
       <div id="export-segrange-wrap" class="hidden mb-4">
         <div class="flex justify-between text-xs text-zinc-400 mb-1">
@@ -1967,7 +1957,11 @@
     // trajectory, low-pass it, and the jitter to cancel = smoothed - raw. Apply the inverse as a
     // small zoom-crop + translate (zoom is the "lose a little quality" margin that hides the shift).
     const STAB_ZOOM = 1.08; // medium strength (~8% crop)
-    let stabEnabled = (() => { try { return localStorage.getItem('trv_stab') === '1'; } catch (e) { return false; } })();
+    // DISABLED: real-time integral-projection stabilization didn't work well on forward-driving
+    // dashcam footage (near-zero detectable global motion most of the time + browser-downscale noise
+    // → it mostly just zoomed and injected jitter). Engine kept for a future two-pass export-time
+    // rebuild; forced off so the UI can't enable it.
+    let stabEnabled = false;
     let previewStab = null;
     let exportStab = null; // set during export when stabilization is on and 'front' is selected
 
@@ -2689,12 +2683,6 @@ message SeiMetadata {
       const fmt = pickExportFormat();
       document.getElementById('export-format-note').textContent = '格式：' + fmt.label;
 
-      // Front-camera stabilization: only offer it when the front cam exists; default to the
-      // current player toggle so what you see is what you export.
-      const hasFront = cams.includes('front');
-      document.getElementById('export-stabilize-wrap').classList.toggle('hidden', !hasFront);
-      document.getElementById('export-stabilize').checked = hasFront && stabEnabled;
-
       // Session (multi-segment continuous) → a single time-range box that always merges the
       // chosen span into one clip. Single clip → trim sliders. The range comes from the
       // 起點/終點 marks set in the player (no separate "merge?" toggle needed).
@@ -2765,7 +2753,7 @@ message SeiMetadata {
       const composite = document.getElementById('export-composite').checked;
       const startSec = +document.getElementById('export-start').value;
       const endSec = +document.getElementById('export-end').value;
-      const stabilize = document.getElementById('export-stabilize').checked && checked.includes('front');
+      const stabilize = false; // front-camera stabilization disabled (see notes); kept off for now
       const mergeSession = !!(session && session.length > 1);
       let rangeStart = 0, rangeEnd = Infinity;
       if (mergeSession) {
