@@ -1570,11 +1570,12 @@ message SeiMetadata {
     const GEAR_LABEL = { 0: 'P', 1: 'D', 2: 'R', 3: 'N' };
     const AP_LABEL = { 0: '', 1: 'FSD', 2: 'AutoSteer', 3: 'TACC' };
     const STEERING_RATIO = 15; // steering-wheel angle -> road-wheel angle (calmer display)
-    // Accelerator pedal -> 0..1 fraction (SEI value may be 0..1 or 0..100; auto-detect)
+    // Accelerator pedal -> 0..1 fraction. The SEI value is 0..1 on some clips and 0..100 on
+    // others, so the scale is detected ONCE per clip (from the max) — not per frame, which
+    // made low values flicker between ~100% and ~2% as they crossed a threshold.
     function accelFrac(sei) {
-      const v = sei.acceleratorPedalPosition || 0;
-      const f = v <= 1.5 ? v : v / 100;
-      return Math.max(0, Math.min(1, f));
+      const scale = (telemetry && telemetry.accelScale) || 100;
+      return Math.max(0, Math.min(1, (sei.acceleratorPedalPosition || 0) / scale));
     }
 
     // Which telemetry widgets to overlay (user-configurable, persisted)
@@ -1774,6 +1775,10 @@ message SeiMetadata {
 
         telemetry = { samples, cam: refCam };
         telemetry.route = buildRoute(samples);
+        // Detect accelerator scale once (0..1 vs 0..100) so the bar doesn't flicker
+        let accelMax = 0;
+        for (const s of samples) accelMax = Math.max(accelMax, s.sei.acceleratorPedalPosition || 0);
+        telemetry.accelScale = accelMax <= 1.5 ? 1 : 100;
         telemetryEnabled = true;
         setTelemetryBtn('on');
         applyTelemVisibility();
