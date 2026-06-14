@@ -2359,7 +2359,9 @@ message SeiMetadata {
         else { stalls = 0; lastT = refT; }
 
         if ((ref && ref.ended) || refT >= stopAt - 0.04) { stopExport(); return; }
-        setTimeout(() => requestAnimationFrame(drawFrame), 1000 / 30);
+        // Run at the display refresh rate (~60fps) — higher than the ~36fps source, so
+        // every source frame is captured (occasional harmless duplicates), nothing dropped.
+        requestAnimationFrame(drawFrame);
       };
 
       safety = setTimeout(stopExport, (span * 1.6 + 12) * 1000);
