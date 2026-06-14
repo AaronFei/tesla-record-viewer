@@ -261,6 +261,10 @@
 
     /* ---- Spotlight player (main view + thumbnail strip) ---- */
     #player-stage {
+      /* position:relative gives the absolute layers a containing block but MUST stay z-index:auto with
+         no opacity<1 / transform / filter / will-change, so it forms no stacking context and the HUD/maps
+         (z-index:30, siblings in #stage-wrap) keep painting above the video layers. */
+      position: relative; /* positioning context for the two stacked spotlight layers (double-buffer) */
       width: 100%;
       height: 100%;
       display: flex;
@@ -271,7 +275,13 @@
       border-radius: 18px;
       overflow: hidden;
     }
-    #player-stage .video-wrapper { width: 100%; height: 100%; }
+    /* The spotlight wrappers stack and fill the stage (the live front layer + a pre-mounted hidden
+       back layer for the next segment). Centering/letterboxing is via object-fit on the <video>. */
+    /* translateZ(0) on the BASE rule (not just db-back) keeps the wrapper's GPU layer stable across the
+       db-back→db-front swap, so the cut only toggles opacity/z-index and never rebuilds a layer. */
+    #player-stage .video-wrapper { position: absolute; inset: 0; width: 100%; height: 100%; transform: translateZ(0); }
+    #player-stage .video-wrapper.db-back { opacity: 0; z-index: 1; pointer-events: none; }
+    #player-stage .video-wrapper.db-front { opacity: 1; z-index: 2; }
     #player-stage .video-container {
       width: 100%;
       height: 100%;
@@ -350,7 +360,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.8.3</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.9.0</div>
         </div>
       </div>
       
@@ -1388,6 +1398,8 @@
     }
     
     async function loadVideosForEvent(eventData, preserveTelemetry = false) {
+      // Drop any pre-mounted double-buffer back layer before we clear the stage (avoid stranding it).
+      discardStagedBack();
       // Revoke previous object URLs to avoid leaks on rapid event switching
       Object.values(videos).forEach(v => {
         try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {}
@@ -1520,6 +1532,11 @@
     let preloadedSet = null;     // { key, vids, cameras } prebuilt + loading
     let preloadHolder = null;
     let prerollDone = false;     // whether we've re-warmed the next set near this segment's end
+    // Double-buffer: the next segment's spotlight wrapper, pre-mounted in #player-stage as a hidden
+    // (opacity:0, GPU-composited) back layer so the cut is a visibility toggle, not a reparent.
+    let stagedBackWrapper = null;
+    let stagedBackKey = null;
+    let preloadGen = 0;          // bumped on every resetPreload to cancel superseded in-flight builds
     let lastHeavyUI = 0;         // throttle gate (ms) for the heavy per-frame UI work
     let uiLoopVid = null;        // the master video currently driven by the rVFC/rAF UI loop
     let isSeeking = false;       // true while the user is dragging the seek slider
@@ -1590,16 +1607,42 @@
       });
     }
 
-    // Instantly swap in a prebuilt set (no clear-to-black, no metadata wait)
+    // Instantly swap in a prebuilt set. The DOUBLE-BUFFER fast path swaps the spotlight by toggling
+    // visibility between two already-mounted layers (no reparent → no compositor-layer rebuild → no
+    // hitch); falls back to the original reparent if no back layer was staged.
     function mountVideoSet(set, preserveTelemetry) {
-      Object.values(videos).forEach(v => { try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {} });
-      // applySpotlight (below) does the single authoritative clear+reparent — no redundant pre-clear.
+      const oldVideos = videos;
+      const oldMaster = masterVideo;
+      const oldSpotWrapper = (videos[spotlightCam] || {}).wrapper || null;
+      try { if (oldMaster) oldMaster.pause(); } catch (e) {} // stop old rVFC loop; prevent 'ended' re-entry
+
       const preferredCam = spotlightCam; // keep the user's chosen camera across the cut
-      videos = set.vids;
-      masterVideo = null; spotlightCam = null;
       const masterCam = (preferredCam && set.cameras.includes(preferredCam)) ? preferredCam
         : (set.cameras.includes('front') ? 'front' : set.cameras[0]);
-      applySpotlight(masterCam);
+      const stage = document.getElementById('player-stage');
+      const strip = document.getElementById('thumb-strip');
+
+      if (stagedBackWrapper && stagedBackKey === set.key && set.vids[masterCam]
+          && set.vids[masterCam].wrapper === stagedBackWrapper && stage && strip) {
+        // FAST PATH: promote the pre-mounted back layer to front (pure visibility toggle).
+        videos = set.vids;
+        spotlightCam = masterCam;
+        // Authoritative: ensure the promoted master shows frame 0 (the async warm-up is best-effort).
+        try { const sEl = set.vids[masterCam].el; if (sEl && sEl.currentTime > 0.04) sEl.currentTime = 0; } catch (e) {}
+        stagedBackWrapper.classList.remove('db-back'); stagedBackWrapper.classList.add('db-front');
+        if (oldSpotWrapper && oldSpotWrapper !== stagedBackWrapper) { oldSpotWrapper.classList.remove('db-front'); oldSpotWrapper.classList.add('db-back'); }
+        stagedBackWrapper = null; stagedBackKey = null;
+        // Move the other 5 cameras of the new set from the holder into the thumbnail strip.
+        strip.innerHTML = '';
+        Object.keys(videos).sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b))
+          .forEach(c => { if (c !== masterCam) { const w = videos[c].wrapper; w.classList.remove('db-back', 'db-front'); strip.appendChild(w); } });
+      } else {
+        // FALLBACK: original reparent path (correct; only loses the perf win this one cut).
+        videos = set.vids;
+        masterVideo = null; spotlightCam = null;
+        applySpotlight(masterCam); // internally tears down any staged back layer
+      }
+
       masterVideo = (videos[masterCam] || Object.values(videos)[0] || {}).el || null;
       if (masterVideo) attachMasterListeners();
       updateWatermarkVisibility();
@@ -1607,6 +1650,17 @@
       isPlaying = false; updatePlayButton();
       document.getElementById('seek-slider').value = 0;
       playbackTick(true); // reflect the (global) position immediately, even while paused
+
+      // Deferred teardown of the OUTGOING set on the next frame — removing/revoking a still-painting
+      // layer's wrapper/URL synchronously can flash black.
+      requestAnimationFrame(() => {
+        try { if (oldSpotWrapper) oldSpotWrapper.remove(); } catch (e) {}
+        Object.values(oldVideos).forEach(v => {
+          try { v.el.pause(); } catch (e) {}
+          try { if (v.wrapper) v.wrapper.remove(); } catch (e) {}
+          try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {}
+        });
+      });
     }
 
     function schedulePreload() {
@@ -1614,9 +1668,24 @@
       const nextEv = session[sessionIdx + 1];
       if (preloadedSet && preloadedSet.key === nextEv.key) return;
       resetPreload();
-      buildSegmentVideoSet(nextEv).then(set => { preloadedSet = set; }).catch(() => {});
+      const gen = preloadGen; // capture; if a newer reset bumps it, this build is stale → discard
+      buildSegmentVideoSet(nextEv).then(set => {
+        const want = session && session[sessionIdx + 1];
+        if (gen !== preloadGen || !want || want.key !== set.key) { discardSet(set); return; } // superseded → free it
+        preloadedSet = set;
+      }).catch(() => {});
     }
-    function resetPreload() { discardSet(preloadedSet); preloadedSet = null; prerollDone = false; }
+    function resetPreload() { preloadGen++; discardSet(preloadedSet); preloadedSet = null; prerollDone = false; discardStagedBack(); }
+
+    // Tear down the pre-mounted back layer (remove from the stage + clear its classes + null pointers).
+    // The wrapper's URL is owned by preloadedSet, so discardSet already revokes it on resetPreload.
+    function discardStagedBack() {
+      if (stagedBackWrapper) {
+        try { stagedBackWrapper.classList.remove('db-back', 'db-front'); } catch (e) {}
+        try { stagedBackWrapper.remove(); } catch (e) {}
+      }
+      stagedBackWrapper = null; stagedBackKey = null;
+    }
 
     // Just-in-time re-warm: while a video sits paused & off-screen for ~60s, the browser
     // suspends/evicts its decode pipeline. So in the last ~1.2s of the current segment we
@@ -1626,14 +1695,18 @@
       if (!session || sessionIdx >= session.length - 1) return;
       if (masterVideo.currentTime < masterVideo.duration - 1.2) return;
       prerollDone = true;
-      const nextMaster = preloadedSet.cameras.includes('front') ? 'front' : preloadedSet.cameras[0];
+      // The camera that will be the spotlight at the cut = the user's current choice if present, else front.
+      const wantCam = (spotlightCam && preloadedSet.cameras.includes(spotlightCam)) ? spotlightCam
+        : (preloadedSet.cameras.includes('front') ? 'front' : preloadedSet.cameras[0]);
       Object.entries(preloadedSet.vids).forEach(([c, v]) => {
         const el = v && v.el; if (!el) return;
         try {
-          if (c === nextMaster && el.readyState < 3) {
-            // Only the next MASTER gets a real play() warm-up — that's the frame the user sees first.
+          if (c === wantCam && el.readyState < 3) {
+            // Only the spotlight-to-be gets a real play() warm-up — that's the frame the user sees first.
             const p = el.play();
-            if (p && p.then) p.then(() => { try { el.pause(); if (el.currentTime > 0.04) el.currentTime = 0; } catch (e) {} }).catch(() => {});
+            // Guard: if the cut already promoted this element to the live master, the deferred pause/rewind
+            // must NOT run (it would freeze/reset the now-playing spotlight to frame 0 at the boundary).
+            if (p && p.then) p.then(() => { try { if (el === masterVideo) return; el.pause(); if (el.currentTime > 0.04) el.currentTime = 0; } catch (e) {} }).catch(() => {});
           } else if (el.readyState < 3 || el.currentTime > 0.04) {
             // Thumbnails: wake the decoder with a frame-0 re-seek (no concurrent play session),
             // so the current 6 + next 6 don't all decode at once and overflow HW decode slots.
@@ -1641,6 +1714,17 @@
           }
         } catch (e) {}
       });
+      // DOUBLE-BUFFER: pre-mount the spotlight-to-be as a hidden, composited back layer in the stage,
+      // so the cut is a visibility toggle (no reparent → no compositor-layer rebuild → no hitch).
+      if (!stagedBackWrapper || stagedBackKey !== preloadedSet.key) {
+        const w = preloadedSet.vids[wantCam] && preloadedSet.vids[wantCam].wrapper;
+        const stage = document.getElementById('player-stage');
+        if (w && stage) {
+          w.classList.remove('db-front'); w.classList.add('db-back');
+          stage.appendChild(w); // move out of the off-screen holder into the visible stage (hidden)
+          stagedBackWrapper = w; stagedBackKey = preloadedSet.key;
+        }
+      }
     }
 
     // Wait (up to maxWaitMs) for a prebuilt set's master to be smoothly playable. The old
@@ -1648,7 +1732,10 @@
     // instead of stuttering mid-playback.
     function ensureSetReady(set, maxWaitMs) {
       return new Promise(resolve => {
-        const cam = set.cameras.includes('front') ? 'front' : set.cameras[0];
+        // Gate/nudge the camera that will actually be SHOWN at the cut (the user's spotlight if present),
+        // not always front — otherwise a non-front viewer's layer could still be cold at the swap.
+        const cam = (spotlightCam && set.cameras.includes(spotlightCam)) ? spotlightCam
+          : (set.cameras.includes('front') ? 'front' : set.cameras[0]);
         const el = ((set.vids[cam] || Object.values(set.vids)[0]) || {}).el;
         if (!el || el.readyState >= 3) return resolve();
         let done = false;
@@ -1666,6 +1753,9 @@
     function applySpotlight(cam) {
       if (!videos[cam]) cam = Object.keys(videos)[0];
       if (!cam || cam === spotlightCam) return;
+      // A thumbnail click during the preroll window: drop the pre-mounted back layer first so the
+      // upcoming innerHTML='' doesn't strand it (this one cut then falls back to a reparent).
+      discardStagedBack();
       spotlightCam = cam;
 
       const stage = document.getElementById('player-stage');
@@ -1674,11 +1764,13 @@
       stage.innerHTML = '';
       strip.innerHTML = '';
 
-      stage.appendChild(videos[cam].wrapper);
+      const main = videos[cam].wrapper;
+      main.classList.remove('db-back'); main.classList.add('db-front');
+      stage.appendChild(main);
 
       Object.keys(videos)
         .sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b))
-        .forEach(c => { if (c !== cam) strip.appendChild(videos[c].wrapper); });
+        .forEach(c => { if (c !== cam) { const w = videos[c].wrapper; w.classList.remove('db-back', 'db-front'); strip.appendChild(w); } });
 
       // Watermark/timestamp only render on the stage; refresh after re-parenting
       updateWatermarkVisibility();
