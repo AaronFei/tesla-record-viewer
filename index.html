@@ -596,8 +596,13 @@
         <button onclick="closeExportModal()" class="text-zinc-500 hover:text-zinc-200"><i class="fa-solid fa-xmark"></i></button>
       </div>
 
-      <div class="text-xs text-zinc-400 mb-2">選擇要匯出的鏡頭：勾多個會<b>合併成一個畫面</b>；只勾一個則用該鏡頭<b>原生解析度</b>（最清晰）。</div>
-      <div id="export-cam-list" class="grid grid-cols-2 gap-2 mb-4"><!-- camera checkboxes injected --></div>
+      <div class="text-xs text-zinc-400 mb-2">選擇要匯出的鏡頭：</div>
+      <div id="export-cam-list" class="grid grid-cols-2 gap-2 mb-3"><!-- camera checkboxes injected --></div>
+
+      <label class="flex items-start gap-2 text-sm mb-4 cursor-pointer select-none">
+        <input type="checkbox" id="export-composite" checked class="accent-[#e82127] mt-0.5">
+        <span>合成為單一畫面<span class="block text-[11px] text-zinc-500">勾選：多鏡頭合併成一個畫面。<b>取消勾選</b>：每個鏡頭<b>分別匯出</b>成各自的檔案（原生解析度）。</span></span>
+      </label>
 
       <div class="flex items-center gap-3 mb-5">
         <label class="text-xs text-zinc-400">畫質</label>
@@ -1700,8 +1705,9 @@ message SeiMetadata {
       const checked = [...document.querySelectorAll('.export-cam:checked')].map(c => c.value);
       if (!checked.length) { alert('請至少勾選一個鏡頭'); return; }
       const quality = document.getElementById('export-quality').value;
+      const composite = document.getElementById('export-composite').checked;
       closeExportModal();
-      runExport({ cameras: checked, quality });
+      runExport({ cameras: checked, quality, composite });
     }
 
     function setExportProgress(pct, title) {
@@ -1730,15 +1736,6 @@ message SeiMetadata {
     }
 
     async function runExport(opts) {
-      const { text, pos, opacity, mode } = getWatermarkSettings();
-      const tsBaseCam = opts.cameras.includes('front') ? 'front' : opts.cameras[0];
-      const tsBase = videos[tsBaseCam] ? videos[tsBaseCam].baseTime : null;
-      const fmt = pickExportFormat();
-
-      const QUAL = opts.quality === 'std'
-        ? { gridW: 1280, gridH: 720, singleMaxW: 1280, bitrate: 6_000_000 }
-        : { gridW: 1920, gridH: 1080, singleMaxW: 1920, bitrate: 16_000_000 };
-
       isExporting = true;
       exportCancel = false;
       setLeftPaneLocked(true);
@@ -1746,170 +1743,24 @@ message SeiMetadata {
       document.getElementById('export-progress').classList.remove('hidden');
 
       try {
-        const camList = opts.cameras.slice().sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
+        const cams = opts.cameras.slice().sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
 
-        // Fresh muted clones so recording is independent of the UI players
-        const exportVideos = {};
-        for (const cam of camList) {
-          const clone = document.createElement('video');
-          clone.src = videos[cam].el.src;
-          clone.muted = true;
-          clone.playsInline = true;
-          exportVideos[cam] = clone;
-        }
-        await Promise.all(Object.values(exportVideos).map(v => new Promise(res => {
-          if (v.readyState >= 1) res();
-          else { v.onloadedmetadata = res; setTimeout(res, 4000); }
-        })));
-        if (exportCancel) throw new Error('cancelled');
-
-        // Canvas size + layout. Single camera -> native res (sharp). Multiple -> grid.
-        const canvas = document.createElement('canvas');
-        let layout = [];
-        if (camList.length === 1) {
-          const v0 = exportVideos[camList[0]];
-          const vw = v0.videoWidth || 1280, vh = v0.videoHeight || 720;
-          const scale = Math.min(1, QUAL.singleMaxW / vw);
-          canvas.width = Math.round(vw * scale);
-          canvas.height = Math.round(vh * scale);
-          layout = [[camList[0], 0, 0, canvas.width, canvas.height]];
+        if (opts.composite || cams.length === 1) {
+          // One merged file (grid) — or a single camera at native resolution
+          await encodeOne({ cameras: cams, quality: opts.quality },
+            frac => setExportProgress(Math.min(99, Math.round(frac * 100)), '匯出中…'));
         } else {
-          canvas.width = QUAL.gridW;
-          canvas.height = QUAL.gridH;
-          const n = camList.length;
-          const cols = n <= 2 ? n : (n <= 4 ? 2 : 3);
-          const rows = Math.ceil(n / cols);
-          const cellW = canvas.width / cols, cellH = canvas.height / rows;
-          camList.forEach((cam, i) => layout.push([cam, (i % cols) * cellW, Math.floor(i / cols) * cellH, cellW, cellH]));
+          // Export each selected camera as its own file, sequentially
+          for (let i = 0; i < cams.length && !exportCancel; i++) {
+            const label = CAMERA_LABELS[cams[i]] || cams[i];
+            await encodeOne({ cameras: [cams[i]], quality: opts.quality },
+              frac => setExportProgress(Math.min(99, Math.round(((i + frac) / cams.length) * 100)),
+                                        `匯出中… (${i + 1}/${cams.length}) ${label}`));
+          }
         }
-        const ctx = canvas.getContext('2d', { alpha: false });
-        const S = Math.max(1, canvas.height / 720); // scale overlays with resolution
-
-        const startTime = masterVideo ? masterVideo.currentTime : 0;
-        Object.values(exportVideos).forEach(v => { v.currentTime = startTime; });
-
-        const stream = canvas.captureStream(30);
-        const recOpts = { videoBitsPerSecond: QUAL.bitrate };
-        if (fmt.mime) recOpts.mimeType = fmt.mime;
-        const recorder = new MediaRecorder(stream, recOpts);
-        exportRecorder = recorder;
-        const chunks = [];
-        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-
-        const exportPromise = new Promise(resolve => {
-          recorder.onstop = () => {
-            if (!exportCancel && chunks.length) {
-              const blob = new Blob(chunks, { type: fmt.mime || 'video/webm' });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              const safeName = (currentEvent.displayTime || 'tesla').replace(/[:\s]/g, '-');
-              const camTag = camList.length === 1 ? camList[0] : `${camList.length}cam`;
-              a.download = `TeslaCam_${safeName}_${camTag}.${fmt.ext}`;
-              a.href = url;
-              a.click();
-              setTimeout(() => URL.revokeObjectURL(url), 1500);
-            }
-            resolve();
-          };
-        });
-
-        recorder.start();
-        await Promise.all(Object.values(exportVideos).map(v => v.play().catch(() => {})));
-
-        const fps = 30;
-        const duration = masterVideo ? (masterVideo.duration - startTime) : 60;
-        const totalFrames = Math.max(1, Math.floor(duration * fps));
-        let frame = 0;
-
-        const drawFrame = () => {
-          if (exportCancel) { try { recorder.stop(); } catch (e) {} return; }
-
-          ctx.fillStyle = '#0a0a0a';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          layout.forEach(([cam, x, y, w, h]) => {
-            const vid = exportVideos[cam];
-            if (vid && vid.readyState >= 2) drawContain(ctx, vid, x, y, w, h);
-          });
-
-          // Watermark (timestamp / text / both), scaled to resolution
-          const tsStr = tsBase ? formatFootageClock(tsBase, exportVideos[tsBaseCam] ? exportVideos[tsBaseCam].currentTime : 0) : '';
-          let lines;
-          if (mode === 'text') lines = [text];
-          else if (mode === 'both') lines = [tsStr, text].filter(Boolean);
-          else lines = tsStr ? [tsStr] : [];
-          if (lines.length) {
-            ctx.save();
-            ctx.globalAlpha = opacity * 0.95;
-            ctx.fillStyle = '#ffffff';
-            ctx.font = `600 ${Math.round(22 * S)}px system-ui, -apple-system, sans-serif`;
-            ctx.shadowColor = 'rgba(0,0,0,0.7)';
-            ctx.shadowBlur = 6 * S;
-            ctx.shadowOffsetY = 2 * S;
-            const lineH = 28 * S;
-            const topPos = pos.includes('top');
-            let textX = canvas.width / 2;
-            let baseY = topPos ? 32 * S : canvas.height - 28 * S;
-            ctx.textAlign = 'center';
-            if (pos === 'bottom-right') { textX = canvas.width - 28 * S; ctx.textAlign = 'right'; }
-            if (pos === 'top-left') { textX = 28 * S; ctx.textAlign = 'left'; }
-            lines.forEach((ln, i) => {
-              const yy = topPos ? baseY + i * lineH : baseY - (lines.length - 1 - i) * lineH;
-              ctx.fillText(ln, textX, yy);
-            });
-            ctx.restore();
-          }
-
-          // Telemetry HUD burn-in (bottom-left), scaled
-          if (telemetryEnabled && telemetry) {
-            const sei = findSeiAt(exportVideos[tsBaseCam] ? exportVideos[tsBaseCam].currentTime : 0);
-            if (sei) {
-              const kmh = Math.max(0, Math.round((sei.vehicleSpeedMps || 0) * 3.6));
-              const gear = GEAR_LABEL[sei.gearState] || 'P';
-              const ap = AP_LABEL[sei.autopilotState] || '';
-              const hx = 24 * S, hy = canvas.height - 78 * S, hw = 250 * S, hh = 60 * S;
-              ctx.save();
-              ctx.globalAlpha = 0.92;
-              ctx.fillStyle = 'rgba(0,0,0,0.55)';
-              if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(hx, hy, hw, hh, 12 * S); ctx.fill(); }
-              else ctx.fillRect(hx, hy, hw, hh);
-              ctx.fillStyle = '#fff';
-              ctx.textAlign = 'left';
-              ctx.font = `700 ${Math.round(30 * S)}px system-ui, sans-serif`;
-              ctx.fillText(String(kmh), hx + 16 * S, hy + 40 * S);
-              ctx.font = `500 ${Math.round(13 * S)}px system-ui, sans-serif`;
-              ctx.fillStyle = '#cbd5e1';
-              ctx.fillText('km/h', hx + 16 * S + ctx.measureText(String(kmh)).width + 42 * S, hy + 40 * S);
-              ctx.font = `700 ${Math.round(18 * S)}px system-ui, sans-serif`;
-              ctx.fillStyle = '#e4e4e7';
-              ctx.fillText(gear, hx + hw - 40 * S, hy + 26 * S);
-              ctx.fillStyle = sei.blinkerOnLeft ? '#22c55e' : '#3f3f46';
-              ctx.fillText('◀', hx + hw - 70 * S, hy + 48 * S);
-              ctx.fillStyle = sei.blinkerOnRight ? '#22c55e' : '#3f3f46';
-              ctx.fillText('▶', hx + hw - 40 * S, hy + 48 * S);
-              if (ap) { ctx.fillStyle = '#bfdbfe'; ctx.font = `600 ${Math.round(12 * S)}px system-ui, sans-serif`; ctx.fillText(ap, hx + 16 * S, hy + 54 * S); }
-              ctx.restore();
-              ctx.textAlign = 'center';
-            }
-          }
-
-          frame++;
-          setExportProgress(Math.min(99, Math.round((frame / totalFrames) * 100)), '匯出中…');
-
-          const anyEnded = Object.values(exportVideos).some(v => v.ended);
-          const reachedEnd = masterVideo && (exportVideos[camList[0]]?.currentTime >= (masterVideo.duration - 0.2));
-          if (anyEnded || reachedEnd || frame > totalFrames + 30) {
-            setExportProgress(100, '完成中…');
-            try { recorder.stop(); } catch (e) {}
-            return;
-          }
-          setTimeout(() => requestAnimationFrame(drawFrame), 1000 / fps);
-        };
-        requestAnimationFrame(drawFrame);
-
-        await exportPromise;
 
         if (exportCancel) updateStatus('已取消匯出。', '');
-        else updateStatus('匯出完成！檔案已下載。', fmt.label);
+        else updateStatus('匯出完成！檔案已下載。', '');
         setTimeout(hideStatus, 4000);
       } catch (err) {
         if (err && err.message === 'cancelled') updateStatus('已取消匯出。', '');
@@ -1924,6 +1775,178 @@ message SeiMetadata {
         setLeftPaneLocked(false);
         if (isPlaying) Object.values(videos).forEach(v => v.el.play().catch(() => {}));
       }
+    }
+
+    // Encode ONE output file. spec.cameras: 1 = native-res single, >1 = merged grid.
+    // onProgress(frac 0..1) reports this file's progress. Throws 'cancelled' on abort.
+    async function encodeOne(spec, onProgress) {
+      const { text, pos, opacity, mode } = getWatermarkSettings();
+      const fmt = pickExportFormat();
+      const QUAL = spec.quality === 'std'
+        ? { gridW: 1280, gridH: 720, singleMaxW: 1280, bitrate: 6_000_000 }
+        : { gridW: 1920, gridH: 1080, singleMaxW: 1920, bitrate: 16_000_000 };
+
+      const camList = spec.cameras.slice().sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
+      const tsBaseCam = camList.includes('front') ? 'front' : camList[0];
+      const tsBase = videos[tsBaseCam] ? videos[tsBaseCam].baseTime : null;
+
+      // Fresh muted clones so recording is independent of the UI players
+      const exportVideos = {};
+      for (const cam of camList) {
+        const clone = document.createElement('video');
+        clone.src = videos[cam].el.src;
+        clone.muted = true;
+        clone.playsInline = true;
+        exportVideos[cam] = clone;
+      }
+      await Promise.all(Object.values(exportVideos).map(v => new Promise(res => {
+        if (v.readyState >= 1) res();
+        else { v.onloadedmetadata = res; setTimeout(res, 4000); }
+      })));
+      if (exportCancel) throw new Error('cancelled');
+
+      // Canvas size + layout
+      const canvas = document.createElement('canvas');
+      let layout = [];
+      if (camList.length === 1) {
+        const v0 = exportVideos[camList[0]];
+        const vw = v0.videoWidth || 1280, vh = v0.videoHeight || 720;
+        const scale = Math.min(1, QUAL.singleMaxW / vw);
+        canvas.width = Math.round(vw * scale);
+        canvas.height = Math.round(vh * scale);
+        layout = [[camList[0], 0, 0, canvas.width, canvas.height]];
+      } else {
+        canvas.width = QUAL.gridW;
+        canvas.height = QUAL.gridH;
+        const n = camList.length;
+        const cols = n <= 2 ? n : (n <= 4 ? 2 : 3);
+        const rows = Math.ceil(n / cols);
+        const cellW = canvas.width / cols, cellH = canvas.height / rows;
+        camList.forEach((cam, i) => layout.push([cam, (i % cols) * cellW, Math.floor(i / cols) * cellH, cellW, cellH]));
+      }
+      const ctx = canvas.getContext('2d', { alpha: false });
+      const S = Math.max(1, canvas.height / 720); // scale overlays with resolution
+
+      const startTime = masterVideo ? masterVideo.currentTime : 0;
+      Object.values(exportVideos).forEach(v => { v.currentTime = startTime; });
+
+      const stream = canvas.captureStream(30);
+      const recOpts = { videoBitsPerSecond: QUAL.bitrate };
+      if (fmt.mime) recOpts.mimeType = fmt.mime;
+      const recorder = new MediaRecorder(stream, recOpts);
+      exportRecorder = recorder;
+      const chunks = [];
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+      const donePromise = new Promise(resolve => {
+        recorder.onstop = () => {
+          if (!exportCancel && chunks.length) {
+            const blob = new Blob(chunks, { type: fmt.mime || 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const safeName = (currentEvent.displayTime || 'tesla').replace(/[:\s]/g, '-');
+            const camTag = camList.length === 1 ? camList[0] : `${camList.length}cam`;
+            a.download = `TeslaCam_${safeName}_${camTag}.${fmt.ext}`;
+            a.href = url;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1500);
+          }
+          resolve();
+        };
+      });
+
+      recorder.start();
+      await Promise.all(Object.values(exportVideos).map(v => v.play().catch(() => {})));
+
+      const fps = 30;
+      const duration = masterVideo ? (masterVideo.duration - startTime) : 60;
+      const totalFrames = Math.max(1, Math.floor(duration * fps));
+      let frame = 0;
+
+      const drawFrame = () => {
+        if (exportCancel) { try { recorder.stop(); } catch (e) {} return; }
+
+        ctx.fillStyle = '#0a0a0a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        layout.forEach(([cam, x, y, w, h]) => {
+          const vid = exportVideos[cam];
+          if (vid && vid.readyState >= 2) drawContain(ctx, vid, x, y, w, h);
+        });
+
+        // Watermark (timestamp / text / both), scaled to resolution
+        const tsStr = tsBase ? formatFootageClock(tsBase, exportVideos[tsBaseCam] ? exportVideos[tsBaseCam].currentTime : 0) : '';
+        let lines;
+        if (mode === 'text') lines = [text];
+        else if (mode === 'both') lines = [tsStr, text].filter(Boolean);
+        else lines = tsStr ? [tsStr] : [];
+        if (lines.length) {
+          ctx.save();
+          ctx.globalAlpha = opacity * 0.95;
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `600 ${Math.round(22 * S)}px system-ui, -apple-system, sans-serif`;
+          ctx.shadowColor = 'rgba(0,0,0,0.7)';
+          ctx.shadowBlur = 6 * S;
+          ctx.shadowOffsetY = 2 * S;
+          const lineH = 28 * S;
+          const topPos = pos.includes('top');
+          let textX = canvas.width / 2;
+          let baseY = topPos ? 32 * S : canvas.height - 28 * S;
+          ctx.textAlign = 'center';
+          if (pos === 'bottom-right') { textX = canvas.width - 28 * S; ctx.textAlign = 'right'; }
+          if (pos === 'top-left') { textX = 28 * S; ctx.textAlign = 'left'; }
+          lines.forEach((ln, i) => {
+            const yy = topPos ? baseY + i * lineH : baseY - (lines.length - 1 - i) * lineH;
+            ctx.fillText(ln, textX, yy);
+          });
+          ctx.restore();
+        }
+
+        // Telemetry HUD burn-in (bottom-left), scaled
+        if (telemetryEnabled && telemetry) {
+          const sei = findSeiAt(exportVideos[tsBaseCam] ? exportVideos[tsBaseCam].currentTime : 0);
+          if (sei) {
+            const kmh = Math.max(0, Math.round((sei.vehicleSpeedMps || 0) * 3.6));
+            const gear = GEAR_LABEL[sei.gearState] || 'P';
+            const ap = AP_LABEL[sei.autopilotState] || '';
+            const hx = 24 * S, hy = canvas.height - 78 * S, hw = 250 * S, hh = 60 * S;
+            ctx.save();
+            ctx.globalAlpha = 0.92;
+            ctx.fillStyle = 'rgba(0,0,0,0.55)';
+            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(hx, hy, hw, hh, 12 * S); ctx.fill(); }
+            else ctx.fillRect(hx, hy, hw, hh);
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'left';
+            ctx.font = `700 ${Math.round(30 * S)}px system-ui, sans-serif`;
+            ctx.fillText(String(kmh), hx + 16 * S, hy + 40 * S);
+            ctx.font = `500 ${Math.round(13 * S)}px system-ui, sans-serif`;
+            ctx.fillStyle = '#cbd5e1';
+            ctx.fillText('km/h', hx + 16 * S + ctx.measureText(String(kmh)).width + 42 * S, hy + 40 * S);
+            ctx.font = `700 ${Math.round(18 * S)}px system-ui, sans-serif`;
+            ctx.fillStyle = '#e4e4e7';
+            ctx.fillText(gear, hx + hw - 40 * S, hy + 26 * S);
+            ctx.fillStyle = sei.blinkerOnLeft ? '#22c55e' : '#3f3f46';
+            ctx.fillText('◀', hx + hw - 70 * S, hy + 48 * S);
+            ctx.fillStyle = sei.blinkerOnRight ? '#22c55e' : '#3f3f46';
+            ctx.fillText('▶', hx + hw - 40 * S, hy + 48 * S);
+            if (ap) { ctx.fillStyle = '#bfdbfe'; ctx.font = `600 ${Math.round(12 * S)}px system-ui, sans-serif`; ctx.fillText(ap, hx + 16 * S, hy + 54 * S); }
+            ctx.restore();
+            ctx.textAlign = 'center';
+          }
+        }
+
+        frame++;
+        if (onProgress) onProgress(Math.min(1, frame / totalFrames));
+
+        const anyEnded = Object.values(exportVideos).some(v => v.ended);
+        const reachedEnd = masterVideo && (exportVideos[camList[0]]?.currentTime >= (masterVideo.duration - 0.2));
+        if (anyEnded || reachedEnd || frame > totalFrames + 30) {
+          try { recorder.stop(); } catch (e) {}
+          return;
+        }
+        setTimeout(() => requestAnimationFrame(drawFrame), 1000 / fps);
+      };
+      requestAnimationFrame(drawFrame);
+      await donePromise;
     }
     
     function closePlayer() {
