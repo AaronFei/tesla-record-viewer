@@ -350,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.5.1</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.5.2</div>
         </div>
       </div>
       
@@ -1458,6 +1458,9 @@
     let preloadHolder = null;
     let prerollDone = false;     // whether we've re-warmed the next set near this segment's end
     let lastHeavyUI = 0;         // throttle gate (ms) for the heavy per-frame UI work
+    let uiLoopVid = null;        // the master video currently driven by the rVFC/rAF UI loop
+    let isSeeking = false;       // true while the user is dragging the seek slider
+    let _seekBound = false;      // one-time guard for the slider drag listeners
 
     function getPreloadHolder() {
       if (!preloadHolder) {
@@ -1615,53 +1618,88 @@
       updateWatermarkVisibility();
     }
 
-    function attachMasterListeners() {
-      if (!masterVideo) return;
-      
-      // Clear previous interval
-      if (timeUpdateInterval) clearInterval(timeUpdateInterval);
-      
+    // One UI tick: progress bar + time display (cheap, every frame) and, throttled to ~9Hz, the
+    // heavy timestamp/telemetry/GPS-map redraw. Kept module-level so a single rVFC/rAF loop drives it.
+    function playbackTick(forceHeavy) {
+      if (!masterVideo || !masterVideo.duration) return;
       const slider = document.getElementById('seek-slider');
       const timeDisp = document.getElementById('time-display');
-      
-      function updateUI(forceHeavy) {
-        if (!masterVideo || !masterVideo.duration) return;
+      if (session && session.length > 1) {
+        // Whole-session timeline (segments counted together)
+        const durs = sessionDurations();
+        const total = durs.reduce((a, b) => a + b, 0);
+        let before = 0; for (let i = 0; i < sessionIdx; i++) before += durs[i];
+        const elapsed = before + masterVideo.currentTime;
+        if (slider && !isSeeking) slider.value = total > 0 ? Math.min(100, elapsed / total * 100) : 0;
+        if (timeDisp) timeDisp.textContent = `${formatTime(elapsed)} / ${formatTime(total)}`;
+      } else {
+        const percent = (masterVideo.currentTime / masterVideo.duration) * 100;
+        if (slider && !isSeeking) slider.value = isNaN(percent) ? 0 : percent;
+        if (timeDisp) timeDisp.textContent = `${formatTime(masterVideo.currentTime)} / ${formatTime(masterVideo.duration)}`;
+      }
+      maybePrerollNext();
+      const now = performance.now();
+      if (forceHeavy || now - lastHeavyUI >= 110) {
+        lastHeavyUI = now;
+        updateTimestampOverlays();
+        updateTelemetryHUD(masterVideo.currentTime);
+      }
+    }
 
-        // --- Cheap path (every tick): progress bar + time display + preroll check. Kept tiny so
-        // the slider never waits on canvas work — this is what made the bar hitch with the video. ---
-        if (session && session.length > 1) {
-          // Whole-session timeline (segments counted together)
-          const durs = sessionDurations();
-          const total = durs.reduce((a, b) => a + b, 0);
-          let before = 0; for (let i = 0; i < sessionIdx; i++) before += durs[i];
-          const elapsed = before + masterVideo.currentTime;
-          slider.value = total > 0 ? Math.min(100, elapsed / total * 100) : 0;
-          timeDisp.textContent = `${formatTime(elapsed)} / ${formatTime(total)}`;
-        } else {
-          const percent = (masterVideo.currentTime / masterVideo.duration) * 100;
-          slider.value = isNaN(percent) ? 0 : percent;
-          timeDisp.textContent = `${formatTime(masterVideo.currentTime)} / ${formatTime(masterVideo.duration)}`;
-        }
-        maybePrerollNext();
+    // Drive the time bar from requestVideoFrameCallback so it advances in lockstep with the frames
+    // the video actually presents (smooth, no 4Hz timeupdate stepping). Falls back to rAF.
+    // The captured `vid` makes the loop self-terminate when the master changes (segment cut) or pauses.
+    function startUiLoop() {
+      const vid = masterVideo;
+      if (!vid || uiLoopVid === vid) return;
+      uiLoopVid = vid;
+      const stop = () => { if (uiLoopVid === vid) uiLoopVid = null; };
+      if (typeof vid.requestVideoFrameCallback === 'function') {
+        const cb = () => {
+          if (vid !== masterVideo || !isPlaying) { stop(); return; }
+          playbackTick(false);
+          vid.requestVideoFrameCallback(cb);
+        };
+        vid.requestVideoFrameCallback(cb);
+      } else {
+        const loop = () => {
+          if (vid !== masterVideo || !isPlaying) { stop(); return; }
+          playbackTick(false);
+          requestAnimationFrame(loop);
+        };
+        requestAnimationFrame(loop);
+      }
+    }
 
-        // --- Heavy path (throttled ~9Hz): timestamp overlay + telemetry HUD + GPS map redraw. ---
-        const now = performance.now();
-        if (forceHeavy || now - lastHeavyUI >= 110) {
-          lastHeavyUI = now;
-          updateTimestampOverlays();
-          updateTelemetryHUD(masterVideo.currentTime);
+    function attachMasterListeners() {
+      if (!masterVideo) return;
+      if (timeUpdateInterval) clearInterval(timeUpdateInterval);
+
+      // One-time: pause programmatic bar updates while the user drags the slider (so the faster
+      // rVFC-driven updates don't fight the drag thumb).
+      if (!_seekBound) {
+        const sl = document.getElementById('seek-slider');
+        if (sl) {
+          sl.addEventListener('pointerdown', () => { isSeeking = true; });
+          sl.addEventListener('change', () => { isSeeking = false; });
+          window.addEventListener('pointerup', () => { isSeeking = false; });
+          window.addEventListener('pointercancel', () => { isSeeking = false; });
+          _seekBound = true;
         }
       }
 
-      masterVideo.addEventListener('timeupdate', () => updateUI(false));
       masterVideo.addEventListener('ended', () => { onSegmentEnded(); });
-      // Update the HUD/maps immediately on a manual seek/pause (don't wait for the throttle)
-      masterVideo.addEventListener('seeked', () => updateUI(true));
-
-      // Keep polling as safety for some browsers
+      masterVideo.addEventListener('seeked', () => playbackTick(true));
+      masterVideo.addEventListener('play', () => startUiLoop());
+      // When the rVFC/rAF loop isn't running (paused, or a browser throttling it), let timeupdate keep the bar alive.
+      masterVideo.addEventListener('timeupdate', () => { if (uiLoopVid !== masterVideo) playbackTick(false); });
+      // Low-frequency safety baseline (covers backgrounded tabs where rVFC/rAF pause, and any
+      // stall): the rVFC loop layers smooth ~per-frame updates on top. Heavy work stays throttled.
       timeUpdateInterval = setInterval(() => {
-        if (isPlaying && masterVideo) updateUI(false);
-      }, 120);
+        if (isPlaying && masterVideo) playbackTick(false);
+      }, 250);
+
+      startUiLoop();
     }
     
     function formatTime(sec) {
