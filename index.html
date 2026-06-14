@@ -350,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.5.2</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.6.0</div>
         </div>
       </div>
       
@@ -898,6 +898,7 @@
     let sessionIdx = 0;     // which segment is currently loaded
     let sessionRealDurs = [];   // measured per-segment durations (real, not 60s estimates)
     let sessionMeasureToken = 0;
+    let sessionGaps = [];       // real missing-footage seconds before each segment (source discontinuities)
     let continuousMode = (() => { try { return localStorage.getItem('trv_continuous') !== '0'; } catch (e) { return true; } })();
     
     // Supported camera names (case insensitive matching)
@@ -1252,6 +1253,35 @@
 
     // The full run of consecutive ~1-minute segments containing ev (same category, each
     // clip ~60s apart) — expands BOTH backward and forward. Returns [ev] if it stands alone.
+    // Wall-clock start time (ms epoch) of a segment, from its clip filename timestamp.
+    function segStartEpoch(ev) {
+      if (!ev || !ev.clips) return null;
+      const cam = Object.keys(ev.clips).sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b))[0];
+      const name = cam && ev.clips[cam] ? (ev.clips[cam].name || '') : '';
+      const mt = name.match(/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/);
+      const d = parseTeslaBaseTime(mt ? mt[0] : ev.timestamp);
+      return d ? d.getTime() : null;
+    }
+
+    // Brief on-stage note when the cut crosses a real source discontinuity (so the user knows the
+    // jump is missing footage in the recording, not the app stuttering).
+    function showFootageGapNote(gapSec) {
+      const host = document.getElementById('stage-wrap');
+      if (!host) return;
+      let t = document.getElementById('gap-toast');
+      if (!t) {
+        t = document.createElement('div');
+        t.id = 'gap-toast';
+        t.style.cssText = 'position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:30;background:rgba(180,83,9,0.94);color:#fff;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,0.45);pointer-events:none;opacity:0;transition:opacity .25s;white-space:nowrap;';
+        host.appendChild(t);
+      }
+      const g = gapSec >= 90 ? `${(gapSec / 60).toFixed(1)} 分鐘` : `${Math.round(gapSec)} 秒`;
+      t.textContent = `⏭ 行車記錄器影片不連續：此處原始錄影缺少約 ${g}`;
+      t.style.opacity = '1';
+      if (t._timer) clearTimeout(t._timer);
+      t._timer = setTimeout(() => { t.style.opacity = '0'; }, 3000);
+    }
+
     function buildSession(ev) {
       const cat = ev.category || 'Other';
       const list = events.filter(e => (e.category || 'Other') === cat)
@@ -1282,7 +1312,11 @@
     function updateSessionHeader() {
       const ev = session[sessionIdx];
       let txt = `${ev.displayTime} · ${Object.keys(ev.clips).length} 鏡頭`;
-      if (session.length > 1) txt += ` · 連續 ${sessionIdx + 1}/${session.length} 段`;
+      if (session.length > 1) {
+        txt += ` · 連續 ${sessionIdx + 1}/${session.length} 段`;
+        const ngaps = (sessionGaps || []).filter(g => g >= 1.5).length;
+        if (ngaps > 0) txt += ` · ⚠ ${ngaps} 處不連續`;
+      }
       document.getElementById('current-event-name').textContent = txt;
     }
 
@@ -1304,6 +1338,11 @@
     // Called when the current segment ends — advance to the next segment if any
     async function onSegmentEnded() {
       if (session && sessionIdx < session.length - 1) {
+        // Measure the real missing footage before the next segment (Tesla clips aren't always
+        // contiguous — Sentry pauses, dropped/missing clips). Use the just-played real duration.
+        const endedDur = (masterVideo && isFinite(masterVideo.duration) && masterVideo.duration > 0) ? masterVideo.duration : (sessionRealDurs[sessionIdx] || 60);
+        const e0 = segStartEpoch(session[sessionIdx]), e1 = segStartEpoch(session[sessionIdx + 1]);
+        const gap = (e0 != null && e1 != null) ? Math.max(0, (e1 - e0) / 1000 - endedDur) : 0;
         sessionIdx++;
         currentEvent = session[sessionIdx];
         if (preloadedSet && preloadedSet.key === currentEvent.key) {
@@ -1315,6 +1354,7 @@
         }
         isPlaying = false;
         togglePlayAll(); // auto-play the next segment (master first, thumbs deferred)
+        if (gap >= 1.5) showFootageGapNote(gap); // tell the user this jump is missing source footage
         // Cosmetic updates + the heavy next-segment preload are NOT needed for the cut itself —
         // run them after the new segment is playing so they don't jank the first post-cut frames.
         requestAnimationFrame(() => {
@@ -1728,7 +1768,7 @@
     // Runs progressively in the background and refreshes the UI as each segment is measured.
     async function measureSessionDurations() {
       const token = ++sessionMeasureToken;
-      sessionRealDurs = [];
+      sessionRealDurs = []; sessionGaps = [];
       if (!session || session.length < 2) return;
       const holder = getPreloadHolder();
       const durs = new Array(session.length).fill(0);
@@ -1754,6 +1794,16 @@
         }
         durs[i] = d;
         if (sessionMeasureToken === token) { sessionRealDurs = durs.slice(); refreshSessionTime(); }
+      }
+      // Real missing-footage gap before each segment = start-time delta minus the prior clip's length.
+      if (sessionMeasureToken === token) {
+        const gaps = new Array(session.length).fill(0);
+        for (let i = 1; i < session.length; i++) {
+          const a = segStartEpoch(session[i - 1]), b = segStartEpoch(session[i]);
+          if (a != null && b != null) gaps[i] = Math.max(0, (b - a) / 1000 - (durs[i - 1] || 60));
+        }
+        sessionGaps = gaps;
+        updateSessionHeader();
       }
     }
 
