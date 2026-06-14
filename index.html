@@ -224,6 +224,7 @@
     #telemetry-hud .tblink { font-size: 24px; color: #52525b; opacity: .25; }
     #telemetry-hud .tblink.on { color: #22c55e; opacity: 1; text-shadow: 0 0 12px rgba(34,197,94,.9); animation: tblinkpulse .8s steps(1) infinite; }
     @keyframes tblinkpulse { 50% { opacity: .2; } }
+    #telemetry-hud .tsteer { color: #cbd5e1; transition: transform .08s linear; }
     #telemetry-hud .thud-bot { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
     #telemetry-hud .tpill { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
     #telemetry-hud .tgear { background: #ffffff; color: #111; }
@@ -515,6 +516,13 @@
             <div class="tspeed"><span id="t-speed-val">0</span><span class="tunit">km/h</span></div>
             <i id="t-blink-right" class="fa-solid fa-caret-right tblink" title="右方向燈"></i>
           </div>
+          <svg id="t-steer" class="tsteer" viewBox="0 0 40 40" width="34" height="34" aria-hidden="true" title="方向盤">
+            <circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" stroke-width="3"/>
+            <circle cx="20" cy="20" r="3.2" fill="currentColor"/>
+            <line x1="20" y1="20" x2="20" y2="6" stroke="currentColor" stroke-width="3"/>
+            <line x1="20" y1="20" x2="8.5" y2="26.5" stroke="currentColor" stroke-width="3"/>
+            <line x1="20" y1="20" x2="31.5" y2="26.5" stroke="currentColor" stroke-width="3"/>
+          </svg>
           <div class="thud-bot">
             <span id="t-gear" class="tpill tgear">P</span>
             <span id="t-brake" class="tpill tbrake" style="display:none">煞車</span>
@@ -620,8 +628,8 @@
       <div class="flex items-center gap-3 mb-5">
         <label class="text-xs text-zinc-400">畫質</label>
         <select id="export-quality" class="bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-1.5 text-sm focus:outline-none">
-          <option value="max">最高畫質（原生解析度 / 較慢、檔案大）</option>
-          <option value="high" selected>高畫質（1080p）</option>
+          <option value="max" selected>最高畫質（原生解析度 / 較慢、檔案大）</option>
+          <option value="high">高畫質（1080p）</option>
           <option value="std">標準（720p / 檔案小）</option>
         </select>
         <span id="export-format-note" class="text-[11px] text-zinc-500 ml-auto"></span>
@@ -1644,6 +1652,10 @@ message SeiMetadata {
       document.getElementById('t-blink-right').classList.toggle('on', !!sei.blinkerOnRight);
       document.getElementById('t-gear').textContent = GEAR_LABEL[sei.gearState] || 'P';
 
+      // Steering wheel angle (field has no _deg suffix -> treated as radians)
+      const steer = document.getElementById('t-steer');
+      if (steer) steer.style.transform = `rotate(${(sei.steeringWheelAngle || 0) * 180 / Math.PI}deg)`;
+
       // Brake / Autopilot: only show when actually active (clearer than always-on greyed pills)
       document.getElementById('t-brake').style.display = sei.brakeApplied ? '' : 'none';
       const ap = document.getElementById('t-ap');
@@ -1770,6 +1782,20 @@ message SeiMetadata {
       const s = Math.min(w / vw, h / vh);
       const dw = vw * s, dh = vh * s;
       ctx.drawImage(vid, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+    }
+
+    // Draw a steering wheel on the canvas, rotated by angleRad (for export burn-in)
+    function drawSteeringWheel(ctx, cx, cy, r, angleRad, lw, color) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(angleRad || 0);
+      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = lw; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.2, 0, Math.PI * 2); ctx.fill();
+      [-Math.PI / 2, Math.PI * 2 / 3, Math.PI / 3].forEach(a => { // up, down-left, down-right
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(r * Math.cos(a), r * Math.sin(a)); ctx.stroke();
+      });
+      ctx.restore();
     }
 
     async function runExport(opts) {
@@ -1977,32 +2003,46 @@ message SeiMetadata {
 
         // Telemetry HUD burn-in (bottom-left), scaled
         if (telemetryEnabled && telemetry) {
-          const sei = findSeiAt(exportVideos[tsBaseCam] ? exportVideos[tsBaseCam].currentTime : 0);
+          const refTb = ref ? ref.currentTime : 0;
+          const sei = findSeiAt(refTb);
           if (sei) {
             const kmh = Math.max(0, Math.round((sei.vehicleSpeedMps || 0) * 3.6));
             const gear = GEAR_LABEL[sei.gearState] || 'P';
             const ap = AP_LABEL[sei.autopilotState] || '';
-            const hx = 24 * S, hy = canvas.height - 78 * S, hw = 250 * S, hh = 60 * S;
+            const blinkOn = (Math.floor(refTb / 0.35) % 2) === 0; // ~1.4 Hz flash
+            const hx = 24 * S, hy = canvas.height - 92 * S, hw = 300 * S, hh = 74 * S;
             ctx.save();
-            ctx.globalAlpha = 0.92;
-            ctx.fillStyle = 'rgba(0,0,0,0.55)';
-            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(hx, hy, hw, hh, 12 * S); ctx.fill(); }
+            ctx.globalAlpha = 0.95;
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(hx, hy, hw, hh, 14 * S); ctx.fill(); }
             else ctx.fillRect(hx, hy, hw, hh);
+
+            // turn-signal arrows (flash synthesized from time when engaged)
+            ctx.textAlign = 'center';
+            ctx.font = `700 ${Math.round(24 * S)}px system-ui, sans-serif`;
+            ctx.fillStyle = (sei.blinkerOnLeft && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)';
+            ctx.fillText('◀', hx + 22 * S, hy + 42 * S);
+            ctx.fillStyle = (sei.blinkerOnRight && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)';
+            ctx.fillText('▶', hx + 152 * S, hy + 42 * S);
+
+            // speed (km/h)
             ctx.fillStyle = '#fff';
-            ctx.textAlign = 'left';
-            ctx.font = `700 ${Math.round(30 * S)}px system-ui, sans-serif`;
-            ctx.fillText(String(kmh), hx + 16 * S, hy + 40 * S);
-            ctx.font = `500 ${Math.round(13 * S)}px system-ui, sans-serif`;
-            ctx.fillStyle = '#cbd5e1';
-            ctx.fillText('km/h', hx + 16 * S + ctx.measureText(String(kmh)).width + 42 * S, hy + 40 * S);
-            ctx.font = `700 ${Math.round(18 * S)}px system-ui, sans-serif`;
-            ctx.fillStyle = '#e4e4e7';
-            ctx.fillText(gear, hx + hw - 40 * S, hy + 26 * S);
-            ctx.fillStyle = sei.blinkerOnLeft ? '#22c55e' : '#3f3f46';
-            ctx.fillText('◀', hx + hw - 70 * S, hy + 48 * S);
-            ctx.fillStyle = sei.blinkerOnRight ? '#22c55e' : '#3f3f46';
-            ctx.fillText('▶', hx + hw - 40 * S, hy + 48 * S);
-            if (ap) { ctx.fillStyle = '#bfdbfe'; ctx.font = `600 ${Math.round(12 * S)}px system-ui, sans-serif`; ctx.fillText(ap, hx + 16 * S, hy + 54 * S); }
+            ctx.font = `800 ${Math.round(34 * S)}px system-ui, sans-serif`;
+            ctx.fillText(String(kmh), hx + 87 * S, hy + 38 * S);
+            ctx.font = `500 ${Math.round(12 * S)}px system-ui, sans-serif`;
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillText('km/h', hx + 87 * S, hy + 58 * S);
+
+            // steering wheel (rotates with steering_wheel_angle, radians)
+            drawSteeringWheel(ctx, hx + 218 * S, hy + 30 * S, 17 * S, sei.steeringWheelAngle || 0, 3 * S, '#cbd5e1');
+
+            // gear + autopilot + brake (right column)
+            ctx.fillStyle = '#fff';
+            ctx.font = `700 ${Math.round(17 * S)}px system-ui, sans-serif`;
+            ctx.fillText(gear, hx + 272 * S, hy + 26 * S);
+            if (ap) { ctx.fillStyle = '#93c5fd'; ctx.font = `600 ${Math.round(11 * S)}px system-ui, sans-serif`; ctx.fillText(ap, hx + 272 * S, hy + 46 * S); }
+            if (sei.brakeApplied) { ctx.fillStyle = '#f87171'; ctx.font = `700 ${Math.round(11 * S)}px system-ui, sans-serif`; ctx.fillText('煞車', hx + 272 * S, hy + 64 * S); }
+
             ctx.restore();
             ctx.textAlign = 'center';
           }
