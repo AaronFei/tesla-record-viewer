@@ -350,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.8.2</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.8.3</div>
         </div>
       </div>
       
@@ -1353,13 +1353,21 @@
         const endedDur = (masterVideo && isFinite(masterVideo.duration) && masterVideo.duration > 0) ? masterVideo.duration : (sessionRealDurs[sessionIdx] || 60);
         const e0 = segStartEpoch(session[sessionIdx]), e1 = segStartEpoch(session[sessionIdx + 1]);
         const gap = (e0 != null && e1 != null) ? Math.max(0, (e1 - e0) / 1000 - endedDur) : 0;
-        sessionIdx++;
-        currentEvent = session[sessionIdx];
-        if (preloadedSet && preloadedSet.key === currentEvent.key) {
+        // Pin the just-played segment's real duration so its offset contribution can't change value
+        // when it stops being the current segment (the small secondary cause of a timeline shift).
+        sessionRealDurs[sessionIdx] = endedDur;
+        const nextIdx = sessionIdx + 1, nextEvent = session[nextIdx];
+        // Do NOT advance sessionIdx before the async mount. During 'await ensureSetReady' the OLD
+        // (ended) master still sits at currentTime ≈ its duration; if sessionIdx already pointed at
+        // the next segment, the 250ms timeline poll would paint offset(next)+~60 → a forward flash,
+        // then snap back when the new master mounts at 0. Advance ATOMICALLY with the master swap.
+        if (preloadedSet && preloadedSet.key === nextEvent.key) {
           const set = preloadedSet; preloadedSet = null;
-          await ensureSetReady(set, 600); // hold last frame until the next set can play smoothly
+          await ensureSetReady(set, 600); // hold last frame (old idx+master stay consistent) until ready
+          sessionIdx = nextIdx; currentEvent = nextEvent;
           mountVideoSet(set, true); // instant, no black gap
         } else {
+          sessionIdx = nextIdx; currentEvent = nextEvent; // loadVideosForEvent nulls masterVideo synchronously → no mismatched tick
           await loadVideosForEvent(currentEvent, true); // keep the combined session telemetry
         }
         isPlaying = false;
