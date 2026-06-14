@@ -534,10 +534,13 @@
             <div id="tw-speed" class="tspeed"><span id="t-speed-val">0</span><span class="tunit">km/h</span></div>
             <i id="t-blink-right" class="fa-solid fa-caret-right tblink" title="右方向燈"></i>
             <svg id="tw-steer" class="tsteer" viewBox="0 0 48 48" width="36" height="36" title="方向盤（yoke）">
-              <path fill="currentColor" fill-rule="evenodd" d="M15 13 H33 A9 9 0 0 1 42 22 V26 A9 9 0 0 1 33 35 H15 A9 9 0 0 1 6 26 V22 A9 9 0 0 1 15 13 Z M17 20 H31 A4 4 0 0 1 35 24 A4 4 0 0 1 31 28 H17 A4 4 0 0 1 13 24 A4 4 0 0 1 17 20 Z"/>
-              <rect x="13" y="22.4" width="8" height="3.2" rx="1.6" fill="currentColor"/>
-              <rect x="27" y="22.4" width="8" height="3.2" rx="1.6" fill="currentColor"/>
-              <circle cx="24" cy="24" r="3.4" fill="currentColor"/>
+              <g fill="currentColor">
+                <rect x="5" y="13" width="11" height="22" rx="5.5"/>
+                <rect x="32" y="13" width="11" height="22" rx="5.5"/>
+                <rect x="9" y="20.5" width="30" height="7" rx="3.5"/>
+              </g>
+              <circle cx="24" cy="24" r="5" fill="#3f4654"/>
+              <circle cx="24" cy="24" r="2" fill="currentColor"/>
             </svg>
           </div>
 
@@ -1999,26 +2002,22 @@ message SeiMetadata {
       ctx.drawImage(vid, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
     }
 
-    // Draw a filled yoke-style steering control on the canvas, rotated by angleRad (export burn-in)
+    // Draw a Tesla-yoke-style steering control (two side grips + centre bar + hub), rotated
     function drawYoke(ctx, cx, cy, half, angleRad, lw, color) {
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate(angleRad || 0);
+      const rr = (x, y, w, h, r) => { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); ctx.fill(); };
       ctx.fillStyle = color;
-      const w = half, h = half * 0.62, ro = half * 0.5;          // outer rounded rect
-      const wi = half * 0.66, hi = half * 0.22;                  // inner capsule hole
-      if (ctx.roundRect) {
-        ctx.beginPath();
-        ctx.roundRect(-w, -h, 2 * w, 2 * h, ro);
-        ctx.roundRect(-wi, -hi, 2 * wi, 2 * hi, hi);
-        ctx.fill('evenodd');                                     // ring
-      } else {
-        ctx.beginPath(); ctx.rect(-w, -h, 2 * w, 2 * h); ctx.fill();
-      }
-      const sh = half * 0.15;                                    // spokes bridging hole to hub
-      ctx.fillRect(-wi, -sh, wi - half * 0.16, 2 * sh);
-      ctx.fillRect(half * 0.16, -sh, wi - half * 0.16, 2 * sh);
-      ctx.beginPath(); ctx.arc(0, 0, half * 0.2, 0, Math.PI * 2); ctx.fill();   // hub
+      const gw = half * 0.30, gh = half * 1.18;   // side grips
+      rr(-half, -gh / 2, gw, gh, gw / 2);
+      rr(half - gw, -gh / 2, gw, gh, gw / 2);
+      const barW = half * 1.56, barH = half * 0.36;  // centre bar
+      rr(-barW / 2, -barH / 2, barW, barH, barH / 2);
+      ctx.fillStyle = '#3f4654';                    // hub
+      ctx.beginPath(); ctx.arc(0, 0, half * 0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(0, 0, half * 0.12, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
