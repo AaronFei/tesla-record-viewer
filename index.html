@@ -131,6 +131,11 @@
       border-left: 3px solid #e82127;
       padding-left: 7px;
     }
+    /* currently-playing segment within a continuous session */
+    .event-row.seg-current {
+      background: #312036;
+      box-shadow: inset 0 0 0 1px rgba(232,33,39,0.5);
+    }
     .event-row-time {
       font-weight: 600;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -441,6 +446,12 @@
           <button onclick="clearDateFilter()" title="清除日期篩選"
                   class="px-1.5 py-1 text-zinc-500 hover:text-zinc-200"><i class="fa-solid fa-xmark"></i></button>
         </div>
+
+        <!-- Continuous playback toggle -->
+        <label class="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer select-none shrink-0">
+          <input type="checkbox" id="continuous-toggle" class="accent-[#e82127]">
+          <span>連續播放（自動串接相鄰分段）</span>
+        </label>
 
         <!-- Scrollable list region -->
         <div class="flex-1 min-h-0 overflow-y-auto pr-1">
@@ -851,6 +862,10 @@
     let masterVideo = null;
     let spotlightCam = null; // camera currently shown in the main stage
     let timeUpdateInterval = null;
+    // Continuous playback: a "session" is a run of consecutive 1-minute segments
+    let session = null;     // [events] in chronological order, or null
+    let sessionIdx = 0;     // which segment is currently loaded
+    let continuousMode = (() => { try { return localStorage.getItem('trv_continuous') !== '0'; } catch (e) { return true; } })();
     
     // Supported camera names (case insensitive matching)
     // Grid layout (2 columns): row1 = 前/後, row2 = 左後視鏡/右後視鏡, row3 = 左B柱/右B柱
@@ -1202,24 +1217,67 @@
       });
     }
 
+    // Detect the run of consecutive ~1-minute segments starting at ev (same category,
+    // each clip ~60s after the previous). Returns [ev] if nothing follows.
+    function buildSession(ev) {
+      const cat = ev.category || 'Other';
+      const list = events.filter(e => (e.category || 'Other') === cat)
+        .slice().sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      const idx = list.findIndex(e => e.key === ev.key);
+      if (idx < 0) return [ev];
+      const sess = [list[idx]];
+      for (let i = idx; i < list.length - 1 && sess.length < 60; i++) {
+        const t1 = parseTeslaBaseTime(list[i].timestamp);
+        const t2 = parseTeslaBaseTime(list[i + 1].timestamp);
+        if (!t1 || !t2) break;
+        const gap = (t2 - t1) / 1000;
+        if (gap >= 45 && gap <= 95) sess.push(list[i + 1]); else break;
+      }
+      return sess;
+    }
+
+    function highlightSession() {
+      events.forEach(e => { if (e._cardEl) e._cardEl.classList.remove('active', 'border-[#e82127]', 'seg-current'); });
+      (session || []).forEach((e, i) => {
+        if (!e._cardEl) return;
+        e._cardEl.classList.add('active', 'border-[#e82127]');
+        if (i === sessionIdx) e._cardEl.classList.add('seg-current');
+      });
+    }
+
+    function updateSessionHeader() {
+      const ev = session[sessionIdx];
+      let txt = `${ev.displayTime} · ${Object.keys(ev.clips).length} 鏡頭`;
+      if (session.length > 1) txt += ` · 連續 ${sessionIdx + 1}/${session.length} 段`;
+      document.getElementById('current-event-name').textContent = txt;
+    }
+
     async function selectEvent(eventData, cardEl = null) {
       if (isExporting) return; // left pane is locked during export
-      // Deselect previous
-      events.forEach(e => {
-        if (e._cardEl) e._cardEl.classList.remove('active', 'border-[#e82127]');
-      });
-      
-      if (cardEl) {
-        cardEl.classList.add('active', 'border-[#e82127]');
-      } else if (eventData._cardEl) {
-        eventData._cardEl.classList.add('active', 'border-[#e82127]');
-      }
-      
-      currentEvent = eventData;
+      session = continuousMode ? buildSession(eventData) : [eventData];
+      sessionIdx = 0;
+      currentEvent = session[0];
+      highlightSession();
       document.getElementById('player-section').classList.remove('hidden');
-      document.getElementById('current-event-name').textContent = `${eventData.displayTime} · ${Object.keys(eventData.clips).length} 鏡頭`;
-      
-      await loadVideosForEvent(eventData);
+      updateSessionHeader();
+      await loadVideosForEvent(currentEvent);
+    }
+
+    // Called when the current segment ends — advance to the next segment if any
+    async function onSegmentEnded() {
+      if (session && sessionIdx < session.length - 1) {
+        sessionIdx++;
+        currentEvent = session[sessionIdx];
+        highlightSession();
+        updateSessionHeader();
+        if (currentEvent._cardEl) currentEvent._cardEl.scrollIntoView({ block: 'nearest' });
+        await loadVideosForEvent(currentEvent);
+        isPlaying = false;
+        togglePlayAll(); // auto-play the next segment
+      } else {
+        isPlaying = false;
+        updatePlayButton();
+      }
     }
     
     async function loadVideosForEvent(eventData) {
@@ -1391,10 +1449,7 @@
       }
 
       masterVideo.addEventListener('timeupdate', updateUI);
-      masterVideo.addEventListener('ended', () => {
-        isPlaying = false;
-        updatePlayButton();
-      });
+      masterVideo.addEventListener('ended', () => { onSegmentEnded(); });
       
       // Keep polling as safety for some browsers
       timeUpdateInterval = setInterval(() => {
@@ -2417,6 +2472,8 @@ message SeiMetadata {
       masterVideo = null;
       spotlightCam = null;
       currentEvent = null;
+      session = null;
+      sessionIdx = 0;
       isPlaying = false;
       resetTelemetry();
     }
@@ -2520,6 +2577,18 @@ message SeiMetadata {
       bindWatermarkControls();
       buildTelemSettingsUI();
       setupKeyboard();
+
+      // Continuous-playback toggle
+      const ct = document.getElementById('continuous-toggle');
+      if (ct) {
+        ct.checked = continuousMode;
+        ct.addEventListener('change', () => {
+          continuousMode = ct.checked;
+          try { localStorage.setItem('trv_continuous', continuousMode ? '1' : '0'); } catch (e) {}
+          // Re-evaluate the current selection so the highlight reflects the new mode
+          if (currentEvent) selectEvent(currentEvent);
+        });
+      }
 
       // Demo hint for first time (only in console)
       console.log('%c[TeslaRecordViewer] 純本地應用程式已就緒。使用「選擇 TeslaCam 資料夾」開始。', 'color:#555');
