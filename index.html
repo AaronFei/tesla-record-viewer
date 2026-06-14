@@ -282,7 +282,7 @@
     #player-stage .video-wrapper { position: absolute; inset: 0; width: 100%; height: 100%; transform: translateZ(0); }
     #player-stage .video-wrapper.db-back { opacity: 0; z-index: 1; pointer-events: none; }
     #player-stage .video-wrapper.db-front { opacity: 1; z-index: 2; }
-    /* Grid ("九宮格") view: all cameras equal-size in the export-style surround layout. */
+    /* Grid ("六宮格") view: all cameras equal-size in the export-style surround layout. */
     #player-stage.grid-mode { display: grid; gap: 3px; }
     #player-stage.grid-mode .video-wrapper { position: relative; inset: auto; transform: none; opacity: 1; z-index: auto; cursor: pointer; }
     #player-stage.grid-mode .video-wrapper .camera-label { font-size: 11px; padding: 2px 7px; }
@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.10.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.10.1</div>
         </div>
       </div>
       
@@ -528,8 +528,8 @@
 
         <!-- Row 2: tools -->
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <button onclick="toggleView()" id="view-btn" title="切換檢視：主畫面 ↔ 九宮格（全部鏡頭）"
-                  class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 flex items-center gap-1.5 text-xs"><i class="fa-solid fa-table-cells" id="view-icon"></i><span id="view-label">九宮格</span></button>
+          <button onclick="toggleView()" id="view-btn" title="切換檢視：主畫面 ↔ 六宮格（全部鏡頭）"
+                  class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 flex items-center gap-1.5 text-xs"><i class="fa-solid fa-table-cells" id="view-icon"></i><span id="view-label">六宮格</span></button>
           <div class="flex items-center gap-x-1.5 pl-3 border-l border-zinc-800">
             <span class="text-xs text-zinc-500">速度</span>
             <select id="speed-select" onchange="setPlaybackSpeed(this.value)"
@@ -1793,7 +1793,7 @@
       updateWatermarkVisibility();
     }
 
-    // ===== Grid ("九宮格") view: all cameras equal-size in the export-style surround layout =====
+    // ===== Grid ("六宮格") view: all cameras equal-size in the export-style surround layout =====
     function renderGrid() {
       const stage = document.getElementById('player-stage');
       const strip = document.getElementById('thumb-strip');
@@ -1856,7 +1856,7 @@
     }
     function syncViewButton() {
       const icon = document.getElementById('view-icon'), label = document.getElementById('view-label');
-      if (label) label.textContent = viewMode === 'grid' ? '主畫面' : '九宮格'; // the action the button performs
+      if (label) label.textContent = viewMode === 'grid' ? '主畫面' : '六宮格'; // the action the button performs
       if (icon) { icon.classList.toggle('fa-table-cells', viewMode !== 'grid'); icon.classList.toggle('fa-square', viewMode === 'grid'); }
     }
     // Clicking a camera: in grid view → switch to spotlight focused on it; in spotlight → promote it.
