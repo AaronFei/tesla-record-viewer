@@ -1044,20 +1044,13 @@
         else if (camera.includes('back') || camera.includes('rear')) camera = 'back';
         else if (camera.includes('front')) camera = 'front';
         
-        // Try to find the event folder name (the directory the clip lives in)
-        // Use the timestamp itself as primary key, plus any parent folder if available
-        let key = timestamp;
-        
-        // If path contains a typical event folder (same timestamp or nearby), group by it
+        // Key each clip by its OWN filename timestamp. The cameras of one minute-segment
+        // share the same timestamp (so they group together), while different minutes in the
+        // same event folder become separate events — otherwise per-minute segments would
+        // overwrite each other and most of the day's footage would be dropped.
+        const key = timestamp;
         const pathParts = entry.path.split('/');
-        for (let i = pathParts.length - 2; i >= 0; i--) {
-          const part = pathParts[i];
-          if (/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/.test(part)) {
-            key = part; // Prefer the explicit event folder
-            break;
-          }
-        }
-        
+
         // Derive top-level category from TeslaCam subfolder (RecentClips / SavedClips / SentryClips)
         // for hierarchical UI grouping. Fallback to 'Other'.
         let category = 'Other';
@@ -1839,10 +1832,10 @@ message SeiMetadata {
       }
       if (telemShow.gear) document.getElementById('t-gear').textContent = GEAR_LABEL[sei.gearState] || 'P';
 
-      // Steering: SEI gives steering-wheel angle (radians); show road-wheel angle (÷ ratio)
+      // Steering wheel angle is in DEGREES (verified from real clips) -> rotate 1:1
       if (telemShow.steering) {
         const steer = document.getElementById('tw-steer');
-        if (steer) steer.style.transform = `rotate(${(sei.steeringWheelAngle || 0) / STEERING_RATIO * 180 / Math.PI}deg)`;
+        if (steer) steer.style.transform = `rotate(${sei.steeringWheelAngle || 0}deg)`;
       }
 
       // Brake / Autopilot pills: only show when active (and enabled)
@@ -1856,9 +1849,9 @@ message SeiMetadata {
         document.getElementById('t-accel-fill').style.width = Math.round(accelFrac(sei) * 100) + '%';
       }
 
-      // G-force ball: lateral (y) + longitudinal (x) acceleration, ±0.6g range
+      // G-force ball: lateral (y) + longitudinal (x) acceleration, ±0.3g range
       if (telemShow.gforce) {
-        const G = 9.81, RANGE = 0.6 * G, R = 23;
+        const G = 9.81, RANGE = 0.3 * G, R = 23;
         const ax = Math.max(-1, Math.min(1, (sei.linearAccelerationMps2X || 0) / RANGE));
         const ay = Math.max(-1, Math.min(1, (sei.linearAccelerationMps2Y || 0) / RANGE));
         const dot = document.getElementById('t-g-dot');
@@ -2022,7 +2015,7 @@ message SeiMetadata {
 
     // G-force ball for export burn-in (lon = forward+, lat = right+, m/s^2)
     function drawGBall(ctx, cx, cy, r, lon, lat, S) {
-      const G = 9.81, RANGE = 0.6 * G;
+      const G = 9.81, RANGE = 0.3 * G;
       ctx.save();
       ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2 * S;
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
@@ -2088,91 +2081,59 @@ message SeiMetadata {
       return w;
     }
 
-    // Telemetry panel for export — mirrors the on-screen HUD's vertical layout
+    // Telemetry burn-in for export — horizontal bottom bar + corner minimap (matches HUD)
     function drawTelemetryPanel(ctx, canvas, S, sei, refTb) {
       const blinkOn = (Math.floor(refTb / 0.35) % 2) === 0;
       const kmh = Math.max(0, Math.round((sei.vehicleSpeedMps || 0) * 3.6));
       const gear = GEAR_LABEL[sei.gearState] || 'P';
       const ap = AP_LABEL[sei.autopilotState] || '';
+      const showAp = telemShow.autopilot && ap;
+      const showBrake = telemShow.brake && sei.brakeApplied;
       const hasMap = telemShow.map && telemetry.route && telemetry.route.hasGps;
+      const pillW = t => { ctx.font = `700 ${Math.round(13 * S)}px system-ui, sans-serif`; return ctx.measureText(t).width + 18 * S; };
 
-      const rowSpeed = telemShow.speed || telemShow.blinkers || telemShow.steering;
-      const rowMid = telemShow.gear || (telemShow.autopilot && ap) || (telemShow.brake && sei.brakeApplied) || telemShow.accel;
-      const instr = [];
-      if (telemShow.gforce) instr.push('g');
-      if (telemShow.compass) instr.push('c');
-      if (hasMap) instr.push('m');
-      if (!rowSpeed && !rowMid && !instr.length) return;
+      const G = 14 * S, segs = [];
+      if (telemShow.blinkers) segs.push({ k: 'bl', w: 20 * S });
+      if (telemShow.speed) segs.push({ k: 'sp', w: 64 * S });
+      if (telemShow.blinkers) segs.push({ k: 'br', w: 20 * S });
+      if (telemShow.steering) segs.push({ k: 'yk', w: 46 * S });
+      if (telemShow.gear) segs.push({ k: 'gear', w: pillW(gear) });
+      if (showAp) segs.push({ k: 'ap', w: pillW(ap) });
+      if (showBrake) segs.push({ k: 'brake', w: pillW('煞車') });
+      if (telemShow.accel) segs.push({ k: 'accel', w: 150 * S });
+      if (telemShow.gforce) segs.push({ k: 'g', w: 48 * S });
+      if (telemShow.compass) segs.push({ k: 'c', w: 48 * S });
 
-      const P = 14 * S, gap = 9 * S;
-      const sItems = [];
-      if (rowSpeed) {
-        if (telemShow.blinkers) sItems.push({ t: 'bl', w: 20 * S });
-        if (telemShow.speed) sItems.push({ t: 'sp', w: 56 * S });
-        if (telemShow.blinkers) sItems.push({ t: 'br', w: 20 * S });
-        if (telemShow.steering) sItems.push({ t: 'yk', w: 40 * S });
-      }
-      const speedW = sItems.reduce((a, it) => a + it.w, 0) + gap * Math.max(0, sItems.length - 1);
-      let instrW = 0; instr.forEach((it, i) => { instrW += (it === 'm' ? 96 * S : 50 * S) + (i ? 12 * S : 0); });
-      const innerW = Math.max(speedW, instrW, 160 * S);
-      const hSpeed = rowSpeed ? 54 * S : 0, hMid = rowMid ? 26 * S : 0, hInstr = instr.length ? (hasMap ? 100 * S : 54 * S) : 0;
-      const hs = [hSpeed, hMid, hInstr].filter(v => v > 0);
-      const innerH = hs.reduce((a, b) => a + b, 0) + gap * Math.max(0, hs.length - 1);
-      const W = innerW + 2 * P, H = innerH + 2 * P;
-      const x0 = 24 * S, y0 = canvas.height - H - 20 * S, cx = x0 + W / 2;
-
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.62)';
-      ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(x0, y0, W, H, 16 * S); else ctx.rect(x0, y0, W, H);
-      ctx.fill();
-      const rr = (x, y, w, h, r) => { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); ctx.fill(); };
-      let y = y0 + P;
-
-      if (rowSpeed) {
-        const rowY = y + hSpeed / 2;
-        let ix = cx - speedW / 2;
+      if (segs.length) {
+        const pad = 18 * S, H = 70 * S;
+        const innerW = segs.reduce((a, s) => a + s.w, 0) + G * Math.max(0, segs.length - 1);
+        const W = innerW + 2 * pad, x0 = 28 * S, y0 = canvas.height - H - 22 * S, cy = y0 + H / 2;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x0, y0, W, H, 18 * S); else ctx.rect(x0, y0, W, H); ctx.fill();
+        let x = x0 + pad;
         ctx.textBaseline = 'middle';
-        sItems.forEach(it => {
-          const c = ix + it.w / 2;
-          if (it.t === 'bl') { ctx.textAlign = 'center'; ctx.font = `700 ${Math.round(22 * S)}px system-ui, sans-serif`; ctx.fillStyle = (sei.blinkerOnLeft && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)'; ctx.fillText('◀', c, rowY); }
-          else if (it.t === 'br') { ctx.textAlign = 'center'; ctx.font = `700 ${Math.round(22 * S)}px system-ui, sans-serif`; ctx.fillStyle = (sei.blinkerOnRight && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)'; ctx.fillText('▶', c, rowY); }
-          else if (it.t === 'sp') { ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = `800 ${Math.round(34 * S)}px system-ui, sans-serif`; ctx.fillText(String(kmh), c, rowY - 8 * S); ctx.font = `500 ${Math.round(12 * S)}px system-ui, sans-serif`; ctx.fillStyle = '#94a3b8'; ctx.fillText('km/h', c, rowY + 16 * S); }
-          else if (it.t === 'yk') { drawYoke(ctx, c, rowY, 17 * S, (sei.steeringWheelAngle || 0) / STEERING_RATIO, 3 * S, '#cbd5e1'); }
-          ix += it.w + gap;
-        });
-        ctx.textBaseline = 'alphabetic';
-        y += hSpeed + gap;
-      }
-
-      if (rowMid) {
-        const rowY = y + hMid / 2;
-        let lx = x0 + P;
-        const anyBadge = telemShow.gear || (telemShow.autopilot && ap) || (telemShow.brake && sei.brakeApplied);
-        if (telemShow.gear) lx += drawPill(ctx, lx, rowY, gear, '#ffffff', '#111', S) + 6 * S;
-        if (telemShow.autopilot && ap) lx += drawPill(ctx, lx, rowY, ap, '#2563eb', '#fff', S) + 6 * S;
-        if (telemShow.brake && sei.brakeApplied) lx += drawPill(ctx, lx, rowY, '煞車', '#dc2626', '#fff', S) + 6 * S;
-        if (telemShow.accel) {
-          const bx = anyBadge ? lx + 4 * S : x0 + P;
-          const bw = (x0 + W - P) - bx, bh = 7 * S, by = rowY - bh / 2;
-          ctx.fillStyle = '#27272a'; rr(bx, by, bw, bh, bh / 2);
-          ctx.fillStyle = '#22c55e'; rr(bx, by, bw * accelFrac(sei), bh, bh / 2);
+        for (const s of segs) {
+          const c = x + s.w / 2;
+          if (s.k === 'bl') { ctx.textAlign = 'center'; ctx.font = `700 ${Math.round(22 * S)}px system-ui, sans-serif`; ctx.fillStyle = (sei.blinkerOnLeft && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.18)'; ctx.fillText('◀', c, cy); }
+          else if (s.k === 'br') { ctx.textAlign = 'center'; ctx.font = `700 ${Math.round(22 * S)}px system-ui, sans-serif`; ctx.fillStyle = (sei.blinkerOnRight && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.18)'; ctx.fillText('▶', c, cy); }
+          else if (s.k === 'sp') { ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = `800 ${Math.round(36 * S)}px system-ui, sans-serif`; ctx.fillText(String(kmh), c, cy - 7 * S); ctx.font = `500 ${Math.round(12 * S)}px system-ui, sans-serif`; ctx.fillStyle = '#94a3b8'; ctx.fillText('km/h', c, cy + 16 * S); }
+          else if (s.k === 'yk') { drawYoke(ctx, c, cy, 18 * S, (sei.steeringWheelAngle || 0) * Math.PI / 180, 3 * S, '#cbd5e1'); }
+          else if (s.k === 'gear') { ctx.textAlign = 'left'; drawPill(ctx, x, cy, gear, '#ffffff', '#111', S); }
+          else if (s.k === 'ap') { ctx.textAlign = 'left'; drawPill(ctx, x, cy, ap, '#2563eb', '#fff', S); }
+          else if (s.k === 'brake') { ctx.textAlign = 'left'; drawPill(ctx, x, cy, '煞車', '#dc2626', '#fff', S); }
+          else if (s.k === 'accel') { const bw = s.w, bh = 8 * S; ctx.fillStyle = '#27272a'; ctx.beginPath(); ctx.roundRect(x, cy - bh / 2, bw, bh, bh / 2); ctx.fill(); ctx.fillStyle = '#22c55e'; ctx.beginPath(); ctx.roundRect(x, cy - bh / 2, bw * accelFrac(sei), bh, bh / 2); ctx.fill(); ctx.fillStyle = '#64748b'; ctx.font = `500 ${Math.round(10 * S)}px system-ui, sans-serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillText('油門', x, cy - 9 * S); ctx.textBaseline = 'middle'; }
+          else if (s.k === 'g') { drawGBall(ctx, c, cy, 22 * S, sei.linearAccelerationMps2X || 0, sei.linearAccelerationMps2Y || 0, S); }
+          else if (s.k === 'c') { drawCompass(ctx, c, cy, 22 * S, sei.headingDeg || 0, S); }
+          x += s.w + G;
         }
-        y += hMid + gap;
+        ctx.restore();
       }
 
-      if (instr.length) {
-        const rowCY = y + hInstr / 2;
-        let ix = cx - instrW / 2;
-        instr.forEach((it, i) => {
-          if (i) ix += 12 * S;
-          if (it === 'g') { drawGBall(ctx, ix + 25 * S, rowCY, 24 * S, sei.linearAccelerationMps2X || 0, sei.linearAccelerationMps2Y || 0, S); ix += 50 * S; }
-          else if (it === 'c') { drawCompass(ctx, ix + 25 * S, rowCY, 24 * S, sei.headingDeg || 0, S); ix += 50 * S; }
-          else if (it === 'm') { drawExportMinimap(ctx, ix, rowCY - 48 * S, 96 * S, telemetry.route, refTb, S); ix += 96 * S; }
-        });
+      if (hasMap) {
+        const ms = 150 * S;
+        drawExportMinimap(ctx, canvas.width - ms - 28 * S, canvas.height - ms - 22 * S, ms, telemetry.route, refTb, S);
       }
-
-      ctx.restore();
       ctx.textAlign = 'center';
     }
 
