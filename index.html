@@ -198,15 +198,17 @@
     </div>
     
     <div id="events-container" 
-         class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 mb-8 min-h-[120px]">
-      <!-- Populated by JS -->
-      <div id="empty-state" class="col-span-full border border-dashed border-zinc-800 rounded-3xl p-8 text-center">
-        <div class="mx-auto w-12 h-12 flex items-center justify-center rounded-2xl bg-zinc-900 mb-4">
-          <i class="fa-solid fa-folder-open text-3xl text-zinc-600"></i>
-        </div>
-        <div class="text-lg font-medium mb-1">尚未載入任何資料</div>
-        <p class="text-sm text-zinc-500 max-w-xs mx-auto">點擊上方「選擇 TeslaCam 資料夾」開始。建議選擇整個 TeslaCam 資料夾，或直接選擇 SentryClips / SavedClips 子資料夾。</p>
+         class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 mb-3 min-h-[80px]">
+      <!-- Populated by JS (event cards) -->
+    </div>
+
+    <!-- Empty state is now a sibling so it survives container.innerHTML = '' -->
+    <div id="empty-state" class="mb-8 border border-dashed border-zinc-800 rounded-3xl p-8 text-center">
+      <div class="mx-auto w-12 h-12 flex items-center justify-center rounded-2xl bg-zinc-900 mb-4">
+        <i class="fa-solid fa-folder-open text-3xl text-zinc-600"></i>
       </div>
+      <div class="text-lg font-medium mb-1">尚未載入任何資料</div>
+      <p class="text-sm text-zinc-500 max-w-xs mx-auto">點擊上方「選擇 TeslaCam 資料夾」開始。建議選擇整個 TeslaCam 資料夾，或直接選擇 SentryClips / SavedClips 子資料夾。</p>
     </div>
 
     <!-- Player Section -->
