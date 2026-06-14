@@ -222,6 +222,8 @@
     }
     /* ID-specificity display:flex above would beat Tailwind .hidden, so override it here */
     #telemetry-hud.hidden { display: none; }
+    /* Active state for the front-camera stabilize toggle */
+    #stab-btn.stab-on { background: rgba(232,33,39,0.15); border-color: #e82127; color: #fca5a5; }
     #telemetry-hud .tspeed { display: flex; flex-direction: column; align-items: center; color: #fff; line-height: 1; }
     #telemetry-hud #t-speed-val { font-size: 32px; font-weight: 800; }
     #telemetry-hud .tunit { font-size: 10px; color: #94a3b8; margin-top: 2px; letter-spacing: .05em; }
@@ -350,7 +352,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.6.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.7.0</div>
         </div>
       </div>
       
@@ -528,7 +530,13 @@
           <span id="mark-readout" class="text-zinc-400 font-mono"></span>
           <button onclick="clearMarks()" id="mark-clear" class="hidden px-1 py-1 text-zinc-500 hover:text-zinc-200" title="清除標記"><i class="fa-solid fa-xmark"></i></button>
         </div>
-        
+
+        <!-- Front-camera digital stabilization (off by default) -->
+        <div class="flex items-center text-xs pl-2 border-l border-zinc-800">
+          <button onclick="toggleStabilize()" id="stab-btn" title="前鏡頭去震（數位防手震，會稍微放大裁切、損失一點畫質）"
+                  class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 flex items-center gap-1.5"><i class="fa-solid fa-wand-magic-sparkles"></i>穩定</button>
+        </div>
+
         <div class="flex items-center gap-2 pl-2 border-l border-zinc-800">
           <button onclick="onTelemetryBtn()" id="telemetry-btn"
                   class="flex items-center gap-x-2 px-3 py-1.5 text-sm font-medium border border-zinc-700 hover:bg-zinc-800 rounded-2xl transition-colors">
@@ -688,9 +696,14 @@
       <div class="text-xs text-zinc-400 mb-2">選擇要匯出的鏡頭：</div>
       <div id="export-cam-list" class="grid grid-cols-2 gap-2 mb-3"><!-- camera checkboxes injected --></div>
 
-      <label class="flex items-start gap-2 text-sm mb-4 cursor-pointer select-none">
+      <label class="flex items-start gap-2 text-sm mb-3 cursor-pointer select-none">
         <input type="checkbox" id="export-composite" checked class="accent-[#e82127] mt-0.5">
         <span>合成為單一畫面<span class="block text-[11px] text-zinc-500">勾選：多鏡頭合併成一個畫面。<b>取消勾選</b>：每個鏡頭<b>分別匯出</b>成各自的檔案（原生解析度）。</span></span>
+      </label>
+
+      <label id="export-stabilize-wrap" class="flex items-start gap-2 text-sm mb-4 cursor-pointer select-none">
+        <input type="checkbox" id="export-stabilize" class="accent-[#e82127] mt-0.5">
+        <span>前鏡頭去震（穩定）<span class="block text-[11px] text-zinc-500">對前鏡頭套用數位防手震，會稍微放大裁切、損失一點畫質。只影響前鏡頭畫面。</span></span>
       </label>
 
       <div id="export-segrange-wrap" class="hidden mb-4">
@@ -1328,6 +1341,7 @@
       highlightSession();
       document.getElementById('player-section').classList.remove('hidden');
       updateSessionHeader();
+      syncStabButton();
       clearMarks();
       resetPreload();
       await loadVideosForEvent(currentEvent);
@@ -1656,6 +1670,9 @@
 
       // Watermark/timestamp only render on the stage; refresh after re-parenting
       updateWatermarkVisibility();
+      // Reset stabilization on any spotlight/segment change (clears a left-behind front transform
+      // and the motion trajectory so we don't carry a stale correction across a discontinuity).
+      resetPreviewStab();
     }
 
     // One UI tick: progress bar + time display (cheap, every frame) and, throttled to ~9Hz, the
@@ -1698,6 +1715,7 @@
         const cb = () => {
           if (vid !== masterVideo || !isPlaying) { stop(); return; }
           playbackTick(false);
+          applyPreviewStab();
           vid.requestVideoFrameCallback(cb);
         };
         vid.requestVideoFrameCallback(cb);
@@ -1705,6 +1723,7 @@
         const loop = () => {
           if (vid !== masterVideo || !isPlaying) { stop(); return; }
           playbackTick(false);
+          applyPreviewStab();
           requestAnimationFrame(loop);
         };
         requestAnimationFrame(loop);
@@ -1729,7 +1748,7 @@
       }
 
       masterVideo.addEventListener('ended', () => { onSegmentEnded(); });
-      masterVideo.addEventListener('seeked', () => playbackTick(true));
+      masterVideo.addEventListener('seeked', () => { if (previewStab) previewStab.reset(); playbackTick(true); });
       masterVideo.addEventListener('play', () => startUiLoop());
       // When the rVFC/rAF loop isn't running (paused, or a browser throttling it), let timeupdate keep the bar alive.
       masterVideo.addEventListener('timeupdate', () => { if (uiLoopVid !== masterVideo) playbackTick(false); });
@@ -1931,6 +1950,90 @@
       Object.values(videos).forEach(v => {
         v.el.playbackRate = speed;
       });
+    }
+
+    // ===== Front-camera digital stabilization (optional, off by default) =====
+    // Per-frame integral-projection motion estimation: downscale the frame, build column/row
+    // intensity projections, find the (dx,dy) shift vs the previous frame, integrate into a
+    // trajectory, low-pass it, and the jitter to cancel = smoothed - raw. Apply the inverse as a
+    // small zoom-crop + translate (zoom is the "lose a little quality" margin that hides the shift).
+    const STAB_ZOOM = 1.08; // medium strength (~8% crop)
+    let stabEnabled = (() => { try { return localStorage.getItem('trv_stab') === '1'; } catch (e) { return false; } })();
+    let previewStab = null;
+    let exportStab = null; // set during export when stabilization is on and 'front' is selected
+
+    function createStabilizer(zoom) {
+      const W = 120, H = 68, SEARCH = 14, SMOOTH = 0.85;
+      zoom = zoom || STAB_ZOOM;
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      let traj = { x: 0, y: 0 }, smooth = { x: 0, y: 0 }, prev = null;
+      function proj(src) {
+        try { cx.drawImage(src, 0, 0, W, H); } catch (e) { return null; }
+        let d; try { d = cx.getImageData(0, 0, W, H).data; } catch (e) { return null; }
+        const col = new Float32Array(W), row = new Float32Array(H);
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; const g = d[i] + d[i + 1] + d[i + 2]; col[x] += g; row[y] += g; }
+        // mean-subtract so brightness flicker doesn't bias the SAD match
+        let mc = 0; for (let i = 0; i < W; i++) mc += col[i]; mc /= W; for (let i = 0; i < W; i++) col[i] -= mc;
+        let mr = 0; for (let i = 0; i < H; i++) mr += row[i]; mr /= H; for (let i = 0; i < H; i++) row[i] -= mr;
+        return { col, row };
+      }
+      function bestShift(cur, prv, len) {
+        let bs = 0, bsad = Infinity;
+        for (let s = -SEARCH; s <= SEARCH; s++) {
+          let sad = 0, n = 0;
+          for (let i = 0; i < len; i++) { const j = i + s; if (j < 0 || j >= len) continue; sad += Math.abs(cur[i] - prv[j]); n++; }
+          if (n > 3) { sad /= n; if (sad < bsad) { bsad = sad; bs = s; } }
+        }
+        return bs;
+      }
+      return {
+        // returns { ox, oy, zoom } where ox/oy are correction offsets as a fraction of width/height
+        process(src) {
+          const p = proj(src);
+          if (!p) return { ox: 0, oy: 0, zoom };
+          if (prev) {
+            const ddx = bestShift(p.col, prev.col, W), ddy = bestShift(p.row, prev.row, H);
+            traj.x += -ddx; traj.y += -ddy; // image motion = -bestShift (validated)
+            smooth.x = SMOOTH * smooth.x + (1 - SMOOTH) * traj.x;
+            smooth.y = SMOOTH * smooth.y + (1 - SMOOTH) * traj.y;
+          }
+          prev = p;
+          const mx = W * (zoom - 1) / 2, my = H * (zoom - 1) / 2; // crop margin → max shift
+          const cxx = Math.max(-mx, Math.min(mx, smooth.x - traj.x));
+          const cyy = Math.max(-my, Math.min(my, smooth.y - traj.y));
+          return { ox: cxx / W, oy: cyy / H, zoom };
+        },
+        reset() { traj = { x: 0, y: 0 }; smooth = { x: 0, y: 0 }; prev = null; }
+      };
+    }
+
+    function clearStabTransform() {
+      if (videos.front && videos.front.el) videos.front.el.style.transform = '';
+    }
+    function resetPreviewStab() { if (previewStab) previewStab.reset(); clearStabTransform(); }
+
+    // Called every frame from the rVFC/rAF loop — only acts when on and the front cam is the main view.
+    function applyPreviewStab() {
+      if (!stabEnabled || spotlightCam !== 'front') return;
+      const el = videos.front && videos.front.el;
+      if (!el || el.readyState < 2) return;
+      if (!previewStab) previewStab = createStabilizer(STAB_ZOOM);
+      const r = previewStab.process(el);
+      el.style.transformOrigin = 'center';
+      el.style.transform = `scale(${r.zoom}) translate(${r.ox * 100 / r.zoom}%, ${r.oy * 100 / r.zoom}%)`;
+    }
+
+    function toggleStabilize() {
+      stabEnabled = !stabEnabled;
+      try { localStorage.setItem('trv_stab', stabEnabled ? '1' : '0'); } catch (e) {}
+      const b = document.getElementById('stab-btn');
+      if (b) b.classList.toggle('stab-on', stabEnabled);
+      if (stabEnabled) { if (previewStab) previewStab.reset(); } else { resetPreviewStab(); }
+    }
+    function syncStabButton() {
+      const b = document.getElementById('stab-btn');
+      if (b) b.classList.toggle('stab-on', stabEnabled);
     }
 
     // ----- Export in/out marks (set from the player, carried into the export dialog) -----
@@ -2577,6 +2680,12 @@ message SeiMetadata {
       const fmt = pickExportFormat();
       document.getElementById('export-format-note').textContent = '格式：' + fmt.label;
 
+      // Front-camera stabilization: only offer it when the front cam exists; default to the
+      // current player toggle so what you see is what you export.
+      const hasFront = cams.includes('front');
+      document.getElementById('export-stabilize-wrap').classList.toggle('hidden', !hasFront);
+      document.getElementById('export-stabilize').checked = hasFront && stabEnabled;
+
       // Session (multi-segment continuous) → a single time-range box that always merges the
       // chosen span into one clip. Single clip → trim sliders. The range comes from the
       // 起點/終點 marks set in the player (no separate "merge?" toggle needed).
@@ -2647,6 +2756,7 @@ message SeiMetadata {
       const composite = document.getElementById('export-composite').checked;
       const startSec = +document.getElementById('export-start').value;
       const endSec = +document.getElementById('export-end').value;
+      const stabilize = document.getElementById('export-stabilize').checked && checked.includes('front');
       const mergeSession = !!(session && session.length > 1);
       let rangeStart = 0, rangeEnd = Infinity;
       if (mergeSession) {
@@ -2655,7 +2765,7 @@ message SeiMetadata {
         if (rangeEnd <= rangeStart) { alert('結束時間需大於起始時間'); return; }
       }
       closeExportModal();
-      runExport({ cameras: checked, quality, composite, startSec, endSec, mergeSession, rangeStart, rangeEnd });
+      runExport({ cameras: checked, quality, composite, startSec, endSec, stabilize, mergeSession, rangeStart, rangeEnd });
     }
 
     function setExportProgress(pct, title) {
@@ -2837,7 +2947,18 @@ message SeiMetadata {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       layout.forEach(([cam, x, y, w, h]) => {
         const vid = exportVideos[cam];
-        if (vid && vid.readyState >= 2) drawContain(ctx, vid, x, y, w, h);
+        if (!vid || vid.readyState < 2) return;
+        if (cam === 'front' && exportStab) {
+          // Stabilize the front cell: zoom-crop + shift by the per-frame correction, clipped to the cell.
+          const r = exportStab.process(vid);
+          ctx.save();
+          ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+          const dw = w * r.zoom, dh = h * r.zoom;
+          drawContain(ctx, vid, x - (dw - w) / 2 + r.ox * w, y - (dh - h) / 2 + r.oy * h, dw, dh);
+          ctx.restore();
+        } else {
+          drawContain(ctx, vid, x, y, w, h);
+        }
       });
 
       // Composite: label each cell with its camera (top-row labels clear a top watermark)
@@ -2942,6 +3063,7 @@ message SeiMetadata {
       const segs = opts.segments;
 
       isExporting = true; exportCancel = false;
+      exportStab = (opts.stabilize && camList.includes('front')) ? createStabilizer(STAB_ZOOM) : null;
       setLeftPaneLocked(true);
       setExportProgress(0, '準備中…');
       document.getElementById('export-progress').classList.remove('hidden');
@@ -3079,6 +3201,7 @@ message SeiMetadata {
           const ref = exportVideos[camList[0]];
           const goff = cumStart;
           exportVideoEls = Object.values(exportVideos);
+          if (exportStab) exportStab.reset(); // fresh clip → reset motion trajectory (avoid cross-clip jump)
 
           await new Promise(resolve => {
             let lastT = -1, stalls = 0, segStopped = false;
@@ -3123,7 +3246,7 @@ message SeiMetadata {
         alert('合併匯出失敗：' + (err && err.message));
       } finally {
         telemetry = savedTelemetry; telemetryEnabled = savedEnabled;
-        isExporting = false; exportRecorder = null;
+        isExporting = false; exportRecorder = null; exportStab = null;
         exportPaused = false; exportVideoEls = []; exportSegControl = null;
         document.getElementById('export-progress').classList.add('hidden');
         setLeftPaneLocked(false);
@@ -3138,6 +3261,7 @@ message SeiMetadata {
       }
       isExporting = true;
       exportCancel = false;
+      exportStab = (opts.stabilize && opts.cameras.includes('front')) ? createStabilizer(STAB_ZOOM) : null;
       setLeftPaneLocked(true);
       setExportProgress(0, '準備中…');
       document.getElementById('export-progress').classList.remove('hidden');
@@ -3170,7 +3294,7 @@ message SeiMetadata {
         }
       } finally {
         isExporting = false;
-        exportRecorder = null;
+        exportRecorder = null; exportStab = null;
         exportPaused = false; exportVideoEls = []; exportSegControl = null;
         document.getElementById('export-progress').classList.add('hidden');
         setLeftPaneLocked(false);
@@ -3290,6 +3414,7 @@ message SeiMetadata {
       recorder.start();
       await Promise.all(Object.values(exportVideos).map(v => v.play().catch(() => {})));
       exportVideoEls = Object.values(exportVideos);
+      if (exportStab) exportStab.reset(); // fresh clip → reset motion trajectory
 
       let stopped = false;
       // Pause-aware safety timer (suspended while the tab is hidden)
