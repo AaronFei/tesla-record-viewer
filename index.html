@@ -2196,7 +2196,7 @@ message SeiMetadata {
       const tsBaseCam = camList.includes('front') ? 'front' : camList[0];
       const tsBase = videos[tsBaseCam] ? videos[tsBaseCam].baseTime : null;
 
-      // Off-screen container keeps clones decoding so requestVideoFrameCallback fires reliably
+      // Off-screen (not display:none) container so the clones keep decoding while recording
       const holder = document.createElement('div');
       holder.style.cssText = 'position:fixed;left:-10000px;top:0;opacity:0;pointer-events:none;';
       document.body.appendChild(holder);
