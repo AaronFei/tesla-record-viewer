@@ -1443,13 +1443,20 @@
       
       function updateUI() {
         if (!masterVideo || !masterVideo.duration) return;
-        
-        const percent = (masterVideo.currentTime / masterVideo.duration) * 100;
-        slider.value = isNaN(percent) ? 0 : percent;
-        
-        const cur = formatTime(masterVideo.currentTime);
-        const dur = formatTime(masterVideo.duration);
-        timeDisp.textContent = `${cur} / ${dur}`;
+
+        if (session && session.length > 1) {
+          // Whole-session timeline (segments counted together)
+          const durs = sessionDurations();
+          const total = durs.reduce((a, b) => a + b, 0);
+          let before = 0; for (let i = 0; i < sessionIdx; i++) before += durs[i];
+          const elapsed = before + masterVideo.currentTime;
+          slider.value = total > 0 ? Math.min(100, elapsed / total * 100) : 0;
+          timeDisp.textContent = `${formatTime(elapsed)} / ${formatTime(total)}`;
+        } else {
+          const percent = (masterVideo.currentTime / masterVideo.duration) * 100;
+          slider.value = isNaN(percent) ? 0 : percent;
+          timeDisp.textContent = `${formatTime(masterVideo.currentTime)} / ${formatTime(masterVideo.duration)}`;
+        }
 
         updateTimestampOverlays();
         updateTelemetryHUD(masterVideo.currentTime);
@@ -1469,6 +1476,19 @@
       const m = Math.floor(sec / 60);
       const s = Math.floor(sec % 60);
       return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+
+    // Per-segment durations for the current session (accurate from telemetry when parsed,
+    // else the current segment's real duration + ~60s estimates for the rest).
+    function sessionDurations() {
+      const n = session ? session.length : 1;
+      const arr = [];
+      for (let i = 0; i < n; i++) {
+        if (telemetry && telemetry.segDur && telemetry.segDur[i]) arr.push(telemetry.segDur[i]);
+        else if (i === sessionIdx && masterVideo && masterVideo.duration > 0) arr.push(masterVideo.duration);
+        else arr.push(60);
+      }
+      return arr;
     }
     
     function syncToMaster() {
@@ -1523,19 +1543,47 @@
       }
     }
     
+    let _seekJumpTimer = null;
+    function seekLocal(t) {
+      Object.values(videos).forEach(v => { try { if (v.el.duration > 0) v.el.currentTime = t; } catch (e) {} });
+      updateTimestampOverlays();
+      updateTelemetryHUD(t);
+    }
+    async function jumpToSegment(si, localT) {
+      if (!session || si < 0 || si >= session.length) return;
+      const wasPlaying = isPlaying;
+      sessionIdx = si;
+      currentEvent = session[si];
+      highlightSession();
+      updateSessionHeader();
+      if (currentEvent._cardEl) currentEvent._cardEl.scrollIntoView({ block: 'nearest' });
+      await loadVideosForEvent(currentEvent, true);
+      Object.values(videos).forEach(v => { try { if (v.el.duration > 0) v.el.currentTime = Math.min(localT, v.el.duration); } catch (e) {} });
+      isPlaying = false;
+      if (wasPlaying) togglePlayAll();
+      else { updatePlayButton(); updateTimestampOverlays(); updateTelemetryHUD(localT); }
+    }
     function seekAll(percent) {
       if (!masterVideo || !masterVideo.duration) return;
-      
-      const newTime = (percent / 100) * masterVideo.duration;
-      Object.values(videos).forEach(v => {
-        try {
-          if (v.el.duration > 0) {
-            v.el.currentTime = newTime;
-          }
-        } catch (e) {}
-      });
-      updateTimestampOverlays();
-      updateTelemetryHUD(newTime);
+      if (session && session.length > 1) {
+        const durs = sessionDurations();
+        const total = durs.reduce((a, b) => a + b, 0);
+        const gt = percent / 100 * total;
+        let si = 0, acc = 0;
+        while (si < durs.length - 1 && acc + durs[si] <= gt) { acc += durs[si]; si++; }
+        const localT = Math.max(0, gt - acc);
+        if (si === sessionIdx) {
+          if (_seekJumpTimer) { clearTimeout(_seekJumpTimer); _seekJumpTimer = null; }
+          seekLocal(localT);
+        } else {
+          // preview the time, debounce the actual cross-segment jump (avoids thrash on drag)
+          document.getElementById('time-display').textContent = `${formatTime(gt)} / ${formatTime(total)}`;
+          if (_seekJumpTimer) clearTimeout(_seekJumpTimer);
+          _seekJumpTimer = setTimeout(() => { _seekJumpTimer = null; jumpToSegment(si, localT); }, 180);
+        }
+      } else {
+        seekLocal(percent / 100 * masterVideo.duration);
+      }
     }
 
     function setPlaybackSpeed(rate) {
@@ -1742,20 +1790,22 @@ message SeiMetadata {
         const minTy = Math.floor(lat2ty(maxLat, z)), maxTy = Math.floor(lat2ty(minLat, z));
         const nx = maxTx - minTx + 1, ny = maxTy - minTy + 1;
         if (nx < 1 || ny < 1 || nx > 6 || ny > 6) return null;
-        const comp = document.createElement('canvas'); comp.width = nx * 256; comp.height = ny * 256;
+        const TP = 512; // CARTO Voyager @2x tiles (retina, prettier)
+        const comp = document.createElement('canvas'); comp.width = nx * TP; comp.height = ny * TP;
         const cctx = comp.getContext('2d');
         const loads = [];
         for (let tx = minTx; tx <= maxTx; tx++) for (let ty = minTy; ty <= maxTy; ty++) {
           loads.push(new Promise(res => {
             const im = new Image(); im.crossOrigin = 'anonymous';
-            im.onload = () => { try { cctx.drawImage(im, (tx - minTx) * 256, (ty - minTy) * 256); } catch (e) {} res(true); };
+            im.onload = () => { try { cctx.drawImage(im, (tx - minTx) * TP, (ty - minTy) * TP, TP, TP); } catch (e) {} res(true); };
             im.onerror = () => res(false);
-            im.src = `https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`;
+            const sub = 'abcd'[(tx + ty) % 4];
+            im.src = `https://${sub}.basemaps.cartocdn.com/rastertiles/voyager/${z}/${tx}/${ty}@2x.png`;
           }));
         }
         const results = await Promise.all(loads);
         if (!results.some(Boolean)) return null;
-        const project = (lat, lng) => ({ px: (lon2tx(lng, z) - minTx) * 256, py: (lat2ty(lat, z) - minTy) * 256 });
+        const project = (lat, lng) => ({ px: (lon2tx(lng, z) - minTx) * TP, py: (lat2ty(lat, z) - minTy) * TP });
         let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
         for (const p of route.pts) { const q = project(p.lat, p.lng); mnx = Math.min(mnx, q.px); mny = Math.min(mny, q.py); mxx = Math.max(mxx, q.px); mxy = Math.max(mxy, q.py); }
         const pad = Math.max(22, (mxx - mnx) * 0.12, (mxy - mny) * 0.12);
@@ -1783,6 +1833,9 @@ message SeiMetadata {
       if (mapBg && mapBg.img) {
         ctx.drawImage(mapBg.img, mapBg.cropX, mapBg.cropY, mapBg.cropSize, mapBg.cropSize, x, y, size, size);
         drawRouteLine(ctx, route, tSec, S, p => { const q = mapBg.project(p.lat, p.lng); return { X: x + (q.px - mapBg.cropX) / mapBg.cropSize * size, Y: y + (q.py - mapBg.cropY) / mapBg.cropSize * size }; });
+        ctx.font = `${Math.round(8 * S)}px system-ui, sans-serif`;
+        ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+        ctx.fillText('© CARTO © OSM', x + size - 3 * S, y + size - 2 * S);
       } else {
         ctx.fillStyle = 'rgba(15,17,21,0.92)'; ctx.fillRect(x, y, size, size);
         const pad = 9 * S;
@@ -1878,7 +1931,10 @@ message SeiMetadata {
         // A multi-segment continuous session is parsed as ONE combined timeline so the
         // GPS path and telemetry are continuous across the whole run, not per-segment.
         const segs = (session && session.length > 1) ? session : [currentEvent];
-        const t = await parseSessionTelemetry(segs, refCam);
+        const t = await parseSessionTelemetry(segs, refCam, (i, n) => {
+          const lab = document.getElementById('telemetry-label');
+          if (lab) lab.textContent = n > 1 ? `解析中… ${i + 1}/${n}` : '解析中…';
+        });
         if (!t) { telemetry = null; telemetryEnabled = false; setTelemetryBtn('none'); updateTelemetryHUD(); return; }
 
         telemetry = t; telemetry.cam = refCam;
@@ -2306,12 +2362,14 @@ message SeiMetadata {
 
     // Parse SEI across ALL session segments into one combined timeline (global time),
     // so the merged export's telemetry — especially the GPS path — is continuous.
-    async function parseSessionTelemetry(segments, refCam) {
+    async function parseSessionTelemetry(segments, refCam, onProg) {
       const ok = await ensureProtobuf();
       const SeiType = ok ? initTelemetryProto() : null;
       if (!SeiType) return null;
       const samples = [], segDur = []; let offset = 0, accelMax = 0;
-      for (const seg of segments) {
+      for (let segI = 0; segI < segments.length; segI++) {
+        const seg = segments[segI];
+        if (onProg) { onProg(segI, segments.length); await new Promise(r => setTimeout(r, 0)); }
         const cam = seg.clips[refCam] ? refCam : Object.keys(seg.clips)[0];
         let dur = 60;
         try {
@@ -2372,8 +2430,7 @@ message SeiMetadata {
           if (savedTelemetry && savedTelemetry.segDur && savedTelemetry.segDur.length === segs.length) {
             mergeTelem = savedTelemetry;
           } else {
-            setExportProgress(0, '解析遙測…');
-            mergeTelem = await parseSessionTelemetry(segs, tsBaseCam);
+            mergeTelem = await parseSessionTelemetry(segs, tsBaseCam, (i, n) => setExportProgress(0, `解析遙測… ${i + 1}/${n} 段`));
           }
         }
         telemetry = mergeTelem; telemetryEnabled = !!mergeTelem;
