@@ -352,7 +352,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.2.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.2.1</div>
         </div>
       </div>
       
@@ -1291,7 +1291,9 @@
       highlightSession();
       document.getElementById('player-section').classList.remove('hidden');
       updateSessionHeader();
+      resetPreload();
       await loadVideosForEvent(currentEvent);
+      schedulePreload();
     }
 
     // Called when the current segment ends — advance to the next segment if any
@@ -1302,9 +1304,15 @@
         highlightSession();
         updateSessionHeader();
         if (currentEvent._cardEl) currentEvent._cardEl.scrollIntoView({ block: 'nearest' });
-        await loadVideosForEvent(currentEvent, true); // keep the combined session telemetry
+        if (preloadedSet && preloadedSet.key === currentEvent.key) {
+          const set = preloadedSet; preloadedSet = null;
+          mountVideoSet(set, true); // instant, no black gap
+        } else {
+          await loadVideosForEvent(currentEvent, true); // keep the combined session telemetry
+        }
         isPlaying = false;
         togglePlayAll(); // auto-play the next segment
+        schedulePreload(); // get the following segment ready
       } else {
         isPlaying = false;
         updatePlayButton();
@@ -1434,6 +1442,90 @@
       document.getElementById('seek-slider').value = 0;
       document.getElementById('time-display').textContent = '00:00 / 00:00';
     }
+
+    // ===== Seamless segment transitions: preload the next segment off-screen =====
+    let preloadedSet = null;     // { key, vids, cameras } prebuilt + loading
+    let preloadHolder = null;
+
+    function getPreloadHolder() {
+      if (!preloadHolder) {
+        preloadHolder = document.createElement('div');
+        preloadHolder.style.cssText = 'position:fixed;left:-10000px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+        document.body.appendChild(preloadHolder);
+      }
+      return preloadHolder;
+    }
+
+    async function buildSegmentVideoSet(eventData) {
+      const cameras = Object.keys(eventData.clips).sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
+      const vids = {}, present = [], holder = getPreloadHolder();
+      for (const cam of cameras) {
+        const entry = eventData.clips[cam];
+        const file = await getClipFile(entry);
+        if (!file) continue;
+        const url = URL.createObjectURL(file);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'video-wrapper';
+        const label = CAMERA_LABELS[cam] || cam;
+        wrapper.innerHTML = `
+          <div class="video-container border border-zinc-700">
+            <video playsinline preload="auto" muted></video>
+            <div class="camera-label">${label}</div>
+            <div class="watermark-overlay hidden" style="font-size: clamp(11px, 1.8vw, 15px);"></div>
+          </div>`;
+        const videoEl = wrapper.querySelector('video');
+        videoEl.src = url; videoEl.dataset.camera = cam; videoEl.muted = true;
+        videoEl.addEventListener('error', () => {
+          const badge = document.createElement('div');
+          badge.className = 'absolute bottom-1 right-1 text-[9px] px-1.5 py-0.5 bg-red-900/80 text-red-300 rounded';
+          badge.textContent = '無法解碼 (可能是 H.265)';
+          wrapper.querySelector('.video-container').appendChild(badge);
+        });
+        videoEl.addEventListener('play', () => { if (videoEl !== masterVideo) syncToMaster(); });
+        wrapper.onclick = () => applySpotlight(cam);
+        const nameTs = (entry.name || '').match(/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/);
+        const baseTime = parseTeslaBaseTime(nameTs ? nameTs[0] : eventData.timestamp);
+        vids[cam] = { el: videoEl, wrapper, url, baseTime };
+        holder.appendChild(wrapper); // off-screen so it loads ahead of time
+        present.push(cam);
+      }
+      return { key: eventData.key, vids, cameras: present };
+    }
+
+    function discardSet(set) {
+      if (!set) return;
+      Object.values(set.vids).forEach(v => {
+        try { v.el.pause(); } catch (e) {}
+        try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {}
+        try { v.wrapper.remove(); } catch (e) {}
+      });
+    }
+
+    // Instantly swap in a prebuilt set (no clear-to-black, no metadata wait)
+    function mountVideoSet(set, preserveTelemetry) {
+      Object.values(videos).forEach(v => { try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {} });
+      document.getElementById('player-stage').innerHTML = '';
+      document.getElementById('thumb-strip').innerHTML = '';
+      videos = set.vids;
+      masterVideo = null; spotlightCam = null;
+      const masterCam = set.cameras.includes('front') ? 'front' : set.cameras[0];
+      applySpotlight(masterCam);
+      masterVideo = (videos[masterCam] || Object.values(videos)[0] || {}).el || null;
+      if (masterVideo) attachMasterListeners();
+      updateWatermarkVisibility();
+      if (!preserveTelemetry) resetTelemetry(); else updateTelemetryHUD(0);
+      isPlaying = false; updatePlayButton();
+      document.getElementById('seek-slider').value = 0;
+    }
+
+    function schedulePreload() {
+      if (!session || sessionIdx >= session.length - 1) { resetPreload(); return; }
+      const nextEv = session[sessionIdx + 1];
+      if (preloadedSet && preloadedSet.key === nextEv.key) return;
+      resetPreload();
+      buildSegmentVideoSet(nextEv).then(set => { preloadedSet = set; }).catch(() => {});
+    }
+    function resetPreload() { discardSet(preloadedSet); preloadedSet = null; }
 
     // Promote a camera to the main stage; the rest become the thumbnail strip.
     // Re-parenting a playing (muted) <video> keeps it playing, so sync is preserved.
@@ -1583,11 +1675,13 @@
       highlightSession();
       updateSessionHeader();
       if (currentEvent._cardEl) currentEvent._cardEl.scrollIntoView({ block: 'nearest' });
+      resetPreload();
       await loadVideosForEvent(currentEvent, true);
       Object.values(videos).forEach(v => { try { if (v.el.duration > 0) v.el.currentTime = Math.min(localT, v.el.duration); } catch (e) {} });
       isPlaying = false;
       if (wasPlaying) togglePlayAll();
       else { updatePlayButton(); updateTimestampOverlays(); updateTelemetryHUD(localT); }
+      schedulePreload();
     }
     function seekAll(percent) {
       if (!masterVideo || !masterVideo.duration) return;
@@ -2932,6 +3026,7 @@ message SeiMetadata {
       session = null;
       sessionIdx = 0;
       isPlaying = false;
+      resetPreload();
       resetTelemetry();
     }
     
