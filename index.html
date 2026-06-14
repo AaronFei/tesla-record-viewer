@@ -350,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.2.3</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.3.0</div>
         </div>
       </div>
       
@@ -509,7 +509,7 @@
         
         <div class="flex items-center gap-x-1.5">
           <span class="text-xs text-zinc-500">速度</span>
-          <select id="speed-select" onchange="setPlaybackSpeed(this.value)" 
+          <select id="speed-select" onchange="setPlaybackSpeed(this.value)"
                   class="bg-zinc-950 border border-zinc-700 text-xs rounded-xl px-3 py-1.5 focus:outline-none">
             <option value="0.5">0.5×</option>
             <option value="0.75">0.75×</option>
@@ -517,6 +517,16 @@
             <option value="1.5">1.5×</option>
             <option value="2">2×</option>
           </select>
+        </div>
+
+        <!-- Mark in/out for export -->
+        <div class="flex items-center gap-1.5 text-xs pl-2 border-l border-zinc-800">
+          <button onclick="setMark('in')" title="標記匯出起點（目前位置）"
+                  class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 font-mono">⟮ 起點</button>
+          <button onclick="setMark('out')" title="標記匯出終點（目前位置）"
+                  class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 font-mono">終點 ⟯</button>
+          <span id="mark-readout" class="text-zinc-400 font-mono"></span>
+          <button onclick="clearMarks()" id="mark-clear" class="hidden px-1 py-1 text-zinc-500 hover:text-zinc-200" title="清除標記"><i class="fa-solid fa-xmark"></i></button>
         </div>
         
         <div class="flex items-center gap-2 pl-2 border-l border-zinc-800">
@@ -1289,6 +1299,7 @@
       highlightSession();
       document.getElementById('player-section').classList.remove('hidden');
       updateSessionHeader();
+      clearMarks();
       resetPreload();
       await loadVideosForEvent(currentEvent);
       schedulePreload();
@@ -1710,7 +1721,25 @@
         v.el.playbackRate = speed;
       });
     }
-    
+
+    // ----- Export in/out marks (set from the player, carried into the export dialog) -----
+    let markIn = null, markOut = null; // session-global seconds
+    function globalNow() { return sessionOffset(sessionIdx) + (masterVideo ? masterVideo.currentTime : 0); }
+    function setMark(which) {
+      const t = globalNow();
+      if (which === 'in') { markIn = t; if (markOut != null && markOut <= markIn) markOut = null; }
+      else { markOut = t; if (markIn != null && markIn >= markOut) markIn = null; }
+      updateMarkReadout();
+    }
+    function clearMarks() { markIn = null; markOut = null; updateMarkReadout(); }
+    function updateMarkReadout() {
+      const r = document.getElementById('mark-readout'), c = document.getElementById('mark-clear');
+      if (!r) return;
+      if (markIn == null && markOut == null) { r.textContent = ''; if (c) c.classList.add('hidden'); return; }
+      r.textContent = `${markIn != null ? formatTime(markIn) : '—'} → ${markOut != null ? formatTime(markOut) : '—'}`;
+      if (c) c.classList.remove('hidden');
+    }
+
     function getWatermarkSettings() {
       const modeEl = document.getElementById('watermark-mode');
       return {
@@ -2285,12 +2314,12 @@ message SeiMetadata {
       if (isSession) document.getElementById('export-merge-count').textContent = session.length;
       const mergeChk = document.getElementById('export-merge');
       mergeChk.checked = isSession;
-      // Time-range inputs (which part of the whole session to merge-export)
+      // Time-range inputs — pre-filled from the in/out marks set in the player
       if (isSession) {
         const total = sessionDurations().reduce((a, b) => a + b, 0);
         document.getElementById('export-total-label').textContent = formatTime(total);
-        document.getElementById('export-time-start').value = '0:00';
-        document.getElementById('export-time-end').value = formatTime(total);
+        document.getElementById('export-time-start').value = formatTime(markIn != null ? markIn : 0);
+        document.getElementById('export-time-end').value = formatTime(markOut != null ? markOut : total);
       }
       const syncMergeUI = () => {
         const merging = isSession && mergeChk.checked;
@@ -2299,12 +2328,15 @@ message SeiMetadata {
       };
       mergeChk.onchange = syncMergeUI; syncMergeUI();
 
-      // Trim range defaults: 0 → clip duration
+      // Trim range (single-clip export) — pre-fill from marks that fall inside this clip
       const dur = (masterVideo && isFinite(masterVideo.duration) && masterVideo.duration > 0) ? masterVideo.duration : 60;
+      const off = sessionOffset(sessionIdx);
+      const localIn = (markIn != null && markIn >= off && markIn <= off + dur) ? markIn - off : 0;
+      const localOut = (markOut != null && markOut > off && markOut <= off + dur) ? markOut - off : dur;
       const startEl = document.getElementById('export-start');
       const endEl = document.getElementById('export-end');
       startEl.max = dur.toFixed(1); endEl.max = dur.toFixed(1);
-      startEl.value = 0; endEl.value = dur.toFixed(1);
+      startEl.value = localIn; endEl.value = localOut;
       updateTrimLabels();
 
       document.getElementById('export-modal').classList.remove('hidden');
@@ -3028,6 +3060,7 @@ message SeiMetadata {
       isPlaying = false;
       resetPreload();
       resetTelemetry();
+      clearMarks();
     }
     
     function clearAll() {
