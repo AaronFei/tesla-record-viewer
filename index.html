@@ -383,11 +383,6 @@
             <i class="fa-solid fa-folder-open"></i>
             <span id="select-btn-text">選擇 TeslaCam 資料夾</span>
           </button>
-          <button onclick="clearAll()"
-                  class="px-3 py-2.5 text-sm border border-zinc-700 hover:bg-zinc-900 rounded-2xl flex items-center gap-x-2 transition-all">
-            <i class="fa-solid fa-trash"></i>
-            <span>清除</span>
-          </button>
         </div>
 
         <div id="fallback-note" class="hidden text-xs px-3 py-2 bg-amber-950 border border-amber-900 text-amber-400 rounded-xl flex items-center gap-2">
@@ -408,7 +403,18 @@
             <span id="event-count" class="ml-2 text-xs text-zinc-500"></span>
           </div>
         </div>
-        <div class="text-[11px] text-zinc-500 -mt-2 shrink-0">依資料夾分組（Recent / Saved / Sentry），最新在上，點擊即可播放</div>
+
+        <!-- Date range filter -->
+        <div class="flex items-center gap-1.5 text-xs shrink-0">
+          <i class="fa-regular fa-calendar text-zinc-500"></i>
+          <input type="date" id="filter-start" onchange="renderEvents()" title="起始日期"
+                 class="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-xs flex-1 min-w-0 text-zinc-300 [color-scheme:dark]">
+          <span class="text-zinc-600">→</span>
+          <input type="date" id="filter-end" onchange="renderEvents()" title="結束日期"
+                 class="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-xs flex-1 min-w-0 text-zinc-300 [color-scheme:dark]">
+          <button onclick="clearDateFilter()" title="清除日期篩選"
+                  class="px-1.5 py-1 text-zinc-500 hover:text-zinc-200"><i class="fa-solid fa-xmark"></i></button>
+        </div>
 
         <!-- Scrollable list region -->
         <div class="flex-1 min-h-0 overflow-y-auto pr-1">
@@ -742,7 +748,14 @@
       'left_pillar': '左 B 柱',
       'right_pillar': '右 B 柱'
     };
-    
+
+    const EMPTY_STATE_DEFAULT = `
+      <div class="mx-auto w-12 h-12 flex items-center justify-center rounded-2xl bg-zinc-900 mb-4">
+        <i class="fa-solid fa-folder-open text-3xl text-zinc-600"></i>
+      </div>
+      <div class="text-base font-medium mb-1">尚未載入任何資料</div>
+      <p class="text-xs text-zinc-500">點擊上方「選擇 TeslaCam 資料夾」開始。可選整個 TeslaCam 資料夾，或 SentryClips / SavedClips 子資料夾。</p>`;
+
     function formatTimestamp(ts) {
       // ts like 2024-06-10_14-22-33
       if (!ts) return '未知';
@@ -953,22 +966,61 @@
       }
     }
     
+    function eventDateStr(ev) {
+      // ev.timestamp like 2024-06-10_14-22-33 -> 2024-06-10
+      return (ev.timestamp || '').slice(0, 10);
+    }
+
+    function getDateFilter() {
+      const s = (document.getElementById('filter-start') || {}).value || '';
+      const e = (document.getElementById('filter-end') || {}).value || '';
+      return { start: s, end: e };
+    }
+
+    function clearDateFilter() {
+      const s = document.getElementById('filter-start');
+      const e = document.getElementById('filter-end');
+      if (s) s.value = '';
+      if (e) e.value = '';
+      renderEvents();
+    }
+
     function renderEvents() {
       const container = document.getElementById('events-container');
+      const emptyEl = document.getElementById('empty-state');
       container.innerHTML = '';
-      document.getElementById('empty-state').style.display = 'none';
-      
+      emptyEl.style.display = 'none';
+
       if (events.length === 0) {
-        document.getElementById('empty-state').style.display = 'block';
+        emptyEl.innerHTML = EMPTY_STATE_DEFAULT;
+        emptyEl.style.display = 'block';
         document.getElementById('event-count').textContent = '';
         return;
       }
-      
-      document.getElementById('event-count').textContent = `${events.length} 個事件`;
-      
+
+      // Apply date-range filter (inclusive; YYYY-MM-DD string compare works)
+      const { start, end } = getDateFilter();
+      const shown = events.filter(ev => {
+        const d = eventDateStr(ev);
+        if (start && d < start) return false;
+        if (end && d > end) return false;
+        return true;
+      });
+
+      const filtering = !!(start || end);
+      document.getElementById('event-count').textContent =
+        filtering ? `${shown.length} / ${events.length} 個事件` : `${events.length} 個事件`;
+
+      if (shown.length === 0) {
+        emptyEl.innerHTML = `<div class="text-base font-medium mb-1">此日期範圍沒有影片</div>
+          <p class="text-xs text-zinc-500">調整起始/結束日期，或按 ✕ 清除篩選。</p>`;
+        emptyEl.style.display = 'block';
+        return;
+      }
+
       // Group the (already newest-first sorted) events by category for hierarchical UI
       const buckets = {};
-      for (const ev of events) {
+      for (const ev of shown) {
         const cat = ev.category || 'Other';
         if (!buckets[cat]) buckets[cat] = [];
         buckets[cat].push(ev);
@@ -1826,8 +1878,11 @@ message SeiMetadata {
       closePlayer();
       events = [];
       directoryHandle = null;
+      clearDateFilter();
       document.getElementById('events-container').innerHTML = '';
-      document.getElementById('empty-state').style.display = 'block';
+      const emptyEl = document.getElementById('empty-state');
+      emptyEl.innerHTML = EMPTY_STATE_DEFAULT;
+      emptyEl.style.display = 'block';
       document.getElementById('event-count').textContent = '';
       hideStatus();
       // Note: category bucketing happens on next successful folder load
