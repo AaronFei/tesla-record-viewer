@@ -195,59 +195,62 @@
       #player-section:not(.hidden) ~ #player-placeholder { display: none; }
     }
 
-    /* ---- Telemetry HUD ---- */
+    /* ---- Telemetry HUD (horizontal bottom bar) ---- */
     #telemetry-hud {
       position: absolute;
       left: 16px;
       bottom: 16px;
       z-index: 30;
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       align-items: center;
-      gap: 8px;
-      padding: 12px 18px;
-      background: rgba(0,0,0,0.62);
+      gap: 12px;
+      padding: 8px 16px;
+      height: 62px;
+      background: rgba(0,0,0,0.6);
       -webkit-backdrop-filter: blur(8px);
       backdrop-filter: blur(8px);
       border: 1px solid rgba(255,255,255,0.14);
       border-radius: 16px;
       pointer-events: none;
       font-variant-numeric: tabular-nums;
-      min-width: 150px;
     }
     /* ID-specificity display:flex above would beat Tailwind .hidden, so override it here */
     #telemetry-hud.hidden { display: none; }
-    #telemetry-hud .thud-row1 { display: flex; align-items: center; justify-content: center; gap: 14px; }
     #telemetry-hud .tspeed { display: flex; flex-direction: column; align-items: center; color: #fff; line-height: 1; }
-    #telemetry-hud #t-speed-val { font-size: 40px; font-weight: 800; }
-    #telemetry-hud .tunit { font-size: 11px; color: #94a3b8; margin-top: 3px; letter-spacing: .05em; }
-    #telemetry-hud .tblink { font-size: 24px; color: #52525b; opacity: .25; }
+    #telemetry-hud #t-speed-val { font-size: 32px; font-weight: 800; }
+    #telemetry-hud .tunit { font-size: 10px; color: #94a3b8; margin-top: 2px; letter-spacing: .05em; }
+    #telemetry-hud .tblink { font-size: 22px; color: #52525b; opacity: .25; }
     #telemetry-hud .tblink.on { color: #22c55e; opacity: 1; text-shadow: 0 0 12px rgba(34,197,94,.9); animation: tblinkpulse .8s steps(1) infinite; }
     @keyframes tblinkpulse { 50% { opacity: .2; } }
     #telemetry-hud .tsteer { color: #cbd5e1; transition: transform .08s linear; }
-    #telemetry-hud .thud-bot { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
-    #telemetry-hud .tpill { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+    #telemetry-hud .tpill { font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px; white-space: nowrap; }
     #telemetry-hud .tgear { background: #ffffff; color: #111; }
     #telemetry-hud .tbrake { background: #dc2626; color: #fff; }
     #telemetry-hud .tap { background: #2563eb; color: #fff; }
-    /* gear/accel row */
-    #telemetry-hud .thud-mid { display: flex; align-items: center; gap: 10px; width: 100%; }
-    #telemetry-hud .thud-badges { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-    /* accelerator bar (right side of the gear row) */
-    #telemetry-hud .taccel { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-    #telemetry-hud .tlabel { font-size: 10px; color: #94a3b8; letter-spacing: .04em; }
-    #telemetry-hud .tbar { flex: 1; height: 7px; background: #27272a; border-radius: 99px; overflow: hidden; }
+    #telemetry-hud .taccel { width: 96px; }
+    #telemetry-hud .tbar { height: 8px; background: #27272a; border-radius: 99px; overflow: hidden; }
     #telemetry-hud .tbar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #22c55e, #84cc16); transition: width .1s linear; }
-    /* instrument row: g-force / compass / minimap */
-    #telemetry-hud .thud-instr { display: flex; align-items: flex-start; justify-content: center; gap: 12px; }
-    #telemetry-hud .tinstr { display: flex; flex-direction: column; align-items: center; gap: 3px; }
-    #telemetry-hud .tinstr .tlabel { margin-top: 1px; }
+    #telemetry-hud .tinstr { display: flex; align-items: center; }
     #telemetry-hud #t-g-dot { transition: cx .08s linear, cy .08s linear; }
     #telemetry-hud #t-compass-rose { transition: transform .12s linear; transform-origin: 30px 30px; }
-    #telemetry-hud .tmap { gap: 4px; }
-    #telemetry-hud #t-map { width: 110px; height: 110px; border-radius: 10px; background: #0f1115; border: 1px solid #3f3f46; }
-    #telemetry-hud .tmaplink { pointer-events: auto; font-size: 10px; color: #93c5fd; text-decoration: underline; }
-    #telemetry-hud .tmaplink:hover { color: #fff; }
+
+    /* GPS minimap — bottom-right corner */
+    #telemetry-map {
+      position: absolute;
+      right: 16px;
+      bottom: 16px;
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      pointer-events: none;
+    }
+    #telemetry-map.hidden { display: none; }
+    #telemetry-map #t-map { width: 130px; height: 130px; border-radius: 12px; background: #0f1115; border: 1px solid #3f3f46; }
+    #telemetry-map .tmaplink { pointer-events: auto; font-size: 11px; color: #93c5fd; text-decoration: underline; background: rgba(0,0,0,0.5); padding: 1px 8px; border-radius: 6px; }
+    #telemetry-map .tmaplink:hover { color: #fff; }
 
     /* ---- Spotlight player (main view + thumbnail strip) ---- */
     #player-stage {
@@ -527,62 +530,51 @@
       <div id="stage-wrap" class="relative flex-1 min-h-0">
         <div id="player-stage"><!-- spotlighted camera wrapper injected by JS --></div>
 
-        <!-- Telemetry HUD (populated after the user parses SEI; widgets toggled by settings) -->
+        <!-- Telemetry HUD — horizontal bottom bar (widgets toggled by settings) -->
         <div id="telemetry-hud" class="hidden">
-          <div class="thud-row1">
-            <i id="t-blink-left" class="fa-solid fa-caret-left tblink" title="左方向燈"></i>
-            <div id="tw-speed" class="tspeed"><span id="t-speed-val">0</span><span class="tunit">km/h</span></div>
-            <i id="t-blink-right" class="fa-solid fa-caret-right tblink" title="右方向燈"></i>
-            <svg id="tw-steer" class="tsteer" viewBox="0 0 40 40" width="34" height="34" title="方向盤（yoke）">
-              <g fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
-                <path d="M7 15 Q7 11 11 11 L16 11 Q20 14.5 24 11 L29 11 Q33 11 33 15 L33 25 Q33 29 29 29 L11 29 Q7 29 7 25 Z"/>
-                <line x1="7" y1="20" x2="16.5" y2="20"/>
-                <line x1="33" y1="20" x2="23.5" y2="20"/>
-              </g>
-              <circle cx="20" cy="20" r="3.4" fill="currentColor"/>
+          <i id="t-blink-left" class="fa-solid fa-caret-left tblink" title="左方向燈"></i>
+          <div id="tw-speed" class="tspeed"><span id="t-speed-val">0</span><span class="tunit">km/h</span></div>
+          <i id="t-blink-right" class="fa-solid fa-caret-right tblink" title="右方向燈"></i>
+          <svg id="tw-steer" class="tsteer" viewBox="0 0 40 40" width="32" height="32" title="方向盤">
+            <g fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+              <path d="M7 15 Q7 11 11 11 L16 11 Q20 14.5 24 11 L29 11 Q33 11 33 15 L33 25 Q33 29 29 29 L11 29 Q7 29 7 25 Z"/>
+              <line x1="7" y1="20" x2="16.5" y2="20"/>
+              <line x1="33" y1="20" x2="23.5" y2="20"/>
+            </g>
+            <circle cx="20" cy="20" r="3.4" fill="currentColor"/>
+          </svg>
+          <span id="t-gear" class="tpill tgear">P</span>
+          <span id="t-ap" class="tpill tap" style="display:none">Autopilot</span>
+          <span id="t-brake" class="tpill tbrake" style="display:none">煞車</span>
+          <div id="tw-accel" class="taccel" title="油門">
+            <div class="tbar"><div id="t-accel-fill" class="tbar-fill"></div></div>
+          </div>
+          <div id="tw-gforce" class="tinstr" title="加速度 G 值">
+            <svg viewBox="0 0 60 60" width="44" height="44">
+              <circle cx="30" cy="30" r="27" fill="none" stroke="#52525b" stroke-width="2"/>
+              <line x1="30" y1="5" x2="30" y2="55" stroke="#3f3f46" stroke-width="1"/>
+              <line x1="5" y1="30" x2="55" y2="30" stroke="#3f3f46" stroke-width="1"/>
+              <circle id="t-g-dot" cx="30" cy="30" r="4.5" fill="#e82127"/>
             </svg>
           </div>
-
-          <div class="thud-mid">
-            <div id="tw-badges" class="thud-badges">
-              <span id="t-gear" class="tpill tgear">P</span>
-              <span id="t-ap" class="tpill tap" style="display:none">Autopilot</span>
-              <span id="t-brake" class="tpill tbrake" style="display:none">煞車</span>
-            </div>
-            <div id="tw-accel" class="taccel">
-              <span class="tlabel">油門</span>
-              <div class="tbar"><div id="t-accel-fill" class="tbar-fill"></div></div>
-            </div>
+          <div id="tw-compass" class="tinstr" title="車頭朝向">
+            <svg viewBox="0 0 60 60" width="44" height="44">
+              <circle cx="30" cy="30" r="27" fill="none" stroke="#52525b" stroke-width="2"/>
+              <g id="t-compass-rose">
+                <text x="30" y="15" text-anchor="middle" fill="#f87171" font-size="11" font-weight="700">N</text>
+                <text x="30" y="52" text-anchor="middle" fill="#94a3b8" font-size="9">S</text>
+                <text x="49" y="33.5" text-anchor="middle" fill="#94a3b8" font-size="9">E</text>
+                <text x="11" y="33.5" text-anchor="middle" fill="#94a3b8" font-size="9">W</text>
+              </g>
+              <polygon points="30,9 26,28 34,28" fill="#e2e8f0"/>
+            </svg>
           </div>
+        </div>
 
-          <div class="thud-instr">
-            <div id="tw-gforce" class="tinstr" title="加速度 G 值">
-              <svg viewBox="0 0 60 60" width="54" height="54">
-                <circle cx="30" cy="30" r="27" fill="none" stroke="#52525b" stroke-width="2"/>
-                <line x1="30" y1="5" x2="30" y2="55" stroke="#3f3f46" stroke-width="1"/>
-                <line x1="5" y1="30" x2="55" y2="30" stroke="#3f3f46" stroke-width="1"/>
-                <circle id="t-g-dot" cx="30" cy="30" r="4.5" fill="#e82127"/>
-              </svg>
-              <span class="tlabel">G</span>
-            </div>
-            <div id="tw-compass" class="tinstr" title="車頭朝向">
-              <svg viewBox="0 0 60 60" width="54" height="54">
-                <circle cx="30" cy="30" r="27" fill="none" stroke="#52525b" stroke-width="2"/>
-                <g id="t-compass-rose">
-                  <text x="30" y="15" text-anchor="middle" fill="#f87171" font-size="11" font-weight="700">N</text>
-                  <text x="30" y="52" text-anchor="middle" fill="#94a3b8" font-size="9">S</text>
-                  <text x="49" y="33.5" text-anchor="middle" fill="#94a3b8" font-size="9">E</text>
-                  <text x="11" y="33.5" text-anchor="middle" fill="#94a3b8" font-size="9">W</text>
-                </g>
-                <polygon points="30,9 26,28 34,28" fill="#e2e8f0"/>
-              </svg>
-              <span class="tlabel">朝向</span>
-            </div>
-            <div id="tw-map" class="tinstr tmap">
-              <canvas id="t-map" width="120" height="120"></canvas>
-              <a id="t-map-link" href="#" target="_blank" rel="noopener" class="tmaplink">Google 地圖 ↗</a>
-            </div>
-          </div>
+        <!-- GPS path-trace minimap (bottom-right corner) -->
+        <div id="telemetry-map" class="hidden">
+          <canvas id="t-map" width="130" height="130"></canvas>
+          <a id="t-map-link" href="#" target="_blank" rel="noopener" class="tmaplink">Google 地圖 ↗</a>
         </div>
       </div>
 
@@ -1626,18 +1618,16 @@ message SeiMetadata {
     // Show/hide each HUD widget per telemShow + data availability
     function applyTelemVisibility() {
       const set = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
-      const hasGps = !!(telemetry && telemetry.route && telemetry.route.hasGps);
       set('tw-speed', telemShow.speed);
       set('tw-steer', telemShow.steering);
       document.getElementById('t-blink-left').style.display = telemShow.blinkers ? '' : 'none';
       document.getElementById('t-blink-right').style.display = telemShow.blinkers ? '' : 'none';
-      set('tw-badges', telemShow.gear || telemShow.autopilot || telemShow.brake);
       set('t-gear', telemShow.gear);
       set('tw-accel', telemShow.accel);
       set('tw-gforce', telemShow.gforce);
       set('tw-compass', telemShow.compass);
-      set('tw-map', telemShow.map && hasGps);
-      // note: t-ap / t-brake additionally gate on being active (set in updateTelemetryHUD)
+      // t-ap / t-brake gate on being active, and the GPS map element gate on data —
+      // both handled in updateTelemetryHUD.
     }
 
     // Build the driven GPS route (normalized 0..1, aspect-corrected) once per clip
@@ -1812,18 +1802,22 @@ message SeiMetadata {
       setTelemetryBtn('idle');
       const hud = document.getElementById('telemetry-hud');
       if (hud) hud.classList.add('hidden');
+      const mapEl = document.getElementById('telemetry-map');
+      if (mapEl) mapEl.classList.add('hidden');
     }
 
     function updateTelemetryHUD(tSec) {
       const hud = document.getElementById('telemetry-hud');
+      const mapEl = document.getElementById('telemetry-map');
       if (!hud) return;
       const show = telemetryEnabled && telemetry;
+      const hasGps = !!(telemetry && telemetry.route && telemetry.route.hasGps);
       hud.classList.toggle('hidden', !show);
+      if (mapEl) mapEl.classList.toggle('hidden', !(show && telemShow.map && hasGps));
       if (!show) return;
-      const sei = findSeiAt(tSec != null ? tSec : (masterVideo ? masterVideo.currentTime : 0));
-      if (!sei) return;
-
       const at = tSec != null ? tSec : (masterVideo ? masterVideo.currentTime : 0);
+      const sei = findSeiAt(at);
+      if (!sei) return;
 
       if (telemShow.speed) document.getElementById('t-speed-val').textContent = Math.max(0, Math.round((sei.vehicleSpeedMps || 0) * 3.6));
       if (telemShow.blinkers) {
@@ -1865,7 +1859,7 @@ message SeiMetadata {
       }
 
       // GPS minimap + open-in-maps link
-      if (telemShow.map) {
+      if (telemShow.map && hasGps) {
         drawMinimap(at);
         const g = currentGps(at);
         const link = document.getElementById('t-map-link');
