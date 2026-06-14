@@ -350,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.4.2</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.4.3</div>
         </div>
       </div>
       
@@ -2610,17 +2610,29 @@ message SeiMetadata {
         ctx.restore();
       }
 
-      // GPS maps bottom-right (follow view above the route minimap when both are on)
+      // GPS maps bottom-right (follow view above the route minimap when both are on).
+      // Both the same size, drawn semi-transparent so the video shows through (not a solid cover).
       const gps = telemetry.route && telemetry.route.hasGps;
       let mapBottom = canvas.height - 22 * S;
+      const MAP_SIZE = 180 * S, MAP_ALPHA = 0.8, MAP_X = canvas.width - 180 * S - 28 * S;
+      const strokeMapBorder = (x, y) => {
+        ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5 * S;
+        ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, MAP_SIZE, MAP_SIZE, 12 * S); else ctx.rect(x, y, MAP_SIZE, MAP_SIZE); ctx.stroke(); ctx.restore();
+      };
       if (telemShow.mapfollow && gps) {
-        const fs = 200 * S;
-        paintFollowMap(ctx, canvas.width - fs - 28 * S, mapBottom - fs, fs, telemetry.route, refTb, S, telemetry.mapBg);
-        mapBottom -= fs + 10 * S;
+        const y = mapBottom - MAP_SIZE;
+        ctx.save(); ctx.globalAlpha = MAP_ALPHA;
+        paintFollowMap(ctx, MAP_X, y, MAP_SIZE, telemetry.route, refTb, S, telemetry.mapBg);
+        ctx.restore();
+        strokeMapBorder(MAP_X, y);
+        mapBottom -= MAP_SIZE + 10 * S;
       }
       if (telemShow.map && gps) {
-        const ms = 150 * S;
-        drawExportMinimap(ctx, canvas.width - ms - 28 * S, mapBottom - ms, ms, telemetry.route, refTb, S);
+        const y = mapBottom - MAP_SIZE;
+        ctx.save(); ctx.globalAlpha = MAP_ALPHA;
+        drawExportMinimap(ctx, MAP_X, y, MAP_SIZE, telemetry.route, refTb, S);
+        ctx.restore();
+        strokeMapBorder(MAP_X, y);
       }
       ctx.textAlign = 'center';
     }
