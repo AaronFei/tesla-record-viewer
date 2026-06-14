@@ -352,7 +352,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.1.1</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.2.0</div>
         </div>
       </div>
       
@@ -692,11 +692,18 @@
 
       <div id="export-segrange-wrap" class="hidden mb-4">
         <div class="flex justify-between text-xs text-zinc-400 mb-1">
-          <span>段範圍（只輸出這幾段）</span>
-          <span class="font-mono text-zinc-300">第 <span id="export-seg-start-label">1</span> → <span id="export-seg-end-label">1</span> 段</span>
+          <span>輸出時間範圍（整串連續）</span>
+          <span class="font-mono text-zinc-300">總長 <span id="export-total-label">0:00</span></span>
         </div>
-        <input type="range" id="export-seg-start" min="1" max="1" step="1" value="1" oninput="onSegRangeInput('start')" class="w-full accent-[#e82127]">
-        <input type="range" id="export-seg-end" min="1" max="1" step="1" value="1" oninput="onSegRangeInput('end')" class="w-full accent-[#e82127]">
+        <div class="flex items-center gap-2 text-sm flex-wrap">
+          <span class="text-xs text-zinc-400">起</span>
+          <input type="text" id="export-time-start" value="0:00" class="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-sm font-mono text-zinc-200 text-center">
+          <button type="button" onclick="setExportTimeNow('start')" class="text-[11px] px-2 py-1 border border-zinc-700 rounded-lg hover:bg-zinc-800">現在</button>
+          <span class="text-xs text-zinc-400 ml-1">迄</span>
+          <input type="text" id="export-time-end" value="0:00" class="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-sm font-mono text-zinc-200 text-center">
+          <button type="button" onclick="setExportTimeNow('end')" class="text-[11px] px-2 py-1 border border-zinc-700 rounded-lg hover:bg-zinc-800">現在</button>
+        </div>
+        <div class="text-[11px] text-zinc-500 mt-1">輸入「分:秒」（例如 2:30），或按「現在」用目前播放位置。</div>
       </div>
 
       <div id="export-trim-wrap" class="mb-4">
@@ -2184,12 +2191,12 @@ message SeiMetadata {
       if (isSession) document.getElementById('export-merge-count').textContent = session.length;
       const mergeChk = document.getElementById('export-merge');
       mergeChk.checked = isSession;
-      // Segment-range sliders (which segments of the session to merge)
+      // Time-range inputs (which part of the whole session to merge-export)
       if (isSession) {
-        const ss = document.getElementById('export-seg-start'), se = document.getElementById('export-seg-end');
-        ss.max = session.length; se.max = session.length;
-        ss.value = 1; se.value = session.length;
-        updateSegRangeLabels();
+        const total = sessionDurations().reduce((a, b) => a + b, 0);
+        document.getElementById('export-total-label').textContent = formatTime(total);
+        document.getElementById('export-time-start').value = '0:00';
+        document.getElementById('export-time-end').value = formatTime(total);
       }
       const syncMergeUI = () => {
         const merging = isSession && mergeChk.checked;
@@ -2214,15 +2221,15 @@ message SeiMetadata {
       document.getElementById('export-start-label').textContent = formatTime(+document.getElementById('export-start').value);
       document.getElementById('export-end-label').textContent = formatTime(+document.getElementById('export-end').value);
     }
-    function updateSegRangeLabels() {
-      document.getElementById('export-seg-start-label').textContent = document.getElementById('export-seg-start').value;
-      document.getElementById('export-seg-end-label').textContent = document.getElementById('export-seg-end').value;
+    function parseTimeInput(str) {
+      str = String(str || '').trim();
+      if (str.includes(':')) { const [m, s] = str.split(':'); return (parseInt(m, 10) || 0) * 60 + (parseFloat(s) || 0); }
+      return parseFloat(str) || 0;
     }
-    function onSegRangeInput(which) {
-      const ss = document.getElementById('export-seg-start'), se = document.getElementById('export-seg-end');
-      let s = +ss.value, e = +se.value;
-      if (s > e) { if (which === 'start') se.value = s; else ss.value = e; }
-      updateSegRangeLabels();
+    function sessionOffset(idx) { const d = sessionDurations(); let o = 0; for (let i = 0; i < idx && i < d.length; i++) o += d[i]; return o; }
+    function setExportTimeNow(which) {
+      const gt = sessionOffset(sessionIdx) + (masterVideo ? masterVideo.currentTime : 0);
+      document.getElementById(which === 'start' ? 'export-time-start' : 'export-time-end').value = formatTime(gt);
     }
 
     function onExportTrimInput(which) {
@@ -2244,10 +2251,14 @@ message SeiMetadata {
       const startSec = +document.getElementById('export-start').value;
       const endSec = +document.getElementById('export-end').value;
       const mergeSession = !!(session && session.length > 1) && document.getElementById('export-merge').checked;
-      let segRange = null;
-      if (mergeSession) segRange = [+document.getElementById('export-seg-start').value, +document.getElementById('export-seg-end').value];
+      let rangeStart = 0, rangeEnd = Infinity;
+      if (mergeSession) {
+        rangeStart = parseTimeInput(document.getElementById('export-time-start').value);
+        rangeEnd = parseTimeInput(document.getElementById('export-time-end').value);
+        if (rangeEnd <= rangeStart) { alert('結束時間需大於起始時間'); return; }
+      }
       closeExportModal();
-      runExport({ cameras: checked, quality, composite, startSec, endSec, mergeSession, segRange });
+      runExport({ cameras: checked, quality, composite, startSec, endSec, mergeSession, rangeStart, rangeEnd });
     }
 
     function setExportProgress(pct, title) {
@@ -2546,10 +2557,39 @@ message SeiMetadata {
         telemetry = mergeTelem; telemetryEnabled = !!mergeTelem;
 
         let donePromise = null;
-        let globalOffset = 0;
+
+        // Per-segment durations + cumulative starts (to map the time range onto segments)
+        let durs;
+        if (mergeTelem && mergeTelem.segDur && mergeTelem.segDur.length === segs.length) durs = mergeTelem.segDur.slice();
+        else {
+          durs = [];
+          for (const seg of segs) {
+            const cam = seg.clips[tsBaseCam] ? tsBaseCam : Object.keys(seg.clips)[0];
+            let d = 60;
+            try {
+              const file = await getClipFile(seg.clips[cam]);
+              if (file) {
+                const u = URL.createObjectURL(file);
+                const v = document.createElement('video'); v.preload = 'metadata'; v.src = u;
+                await new Promise(r => { v.onloadedmetadata = () => r(); v.onerror = () => r(); setTimeout(r, 4000); });
+                if (isFinite(v.duration) && v.duration > 0) d = v.duration;
+                URL.revokeObjectURL(u);
+              }
+            } catch (e) {}
+            durs.push(d);
+          }
+        }
+        const cum = []; let acc = 0; for (const d of durs) { cum.push(acc); acc += d; }
+        const rangeStart = opts.rangeStart || 0;
+        const rangeEnd = (opts.rangeEnd == null ? Infinity : opts.rangeEnd);
+        const recordedTotal = Math.max(0.1, Math.min(rangeEnd, acc) - rangeStart);
 
         for (let si = 0; si < segs.length && !exportCancel; si++) {
           const seg = segs[si];
+          const cumStart = cum[si], segFullDur = durs[si];
+          if (cumStart + segFullDur <= rangeStart || cumStart >= rangeEnd) continue; // outside the chosen range
+          const localStart = Math.max(0, rangeStart - cumStart);
+          const localEnd = Math.min(segFullDur, rangeEnd - cumStart);
           const exportVideos = {}; const urls = [];
           for (const cam of camList) {
             const file = await getClipFile(seg.clips[cam]);
@@ -2560,7 +2600,7 @@ message SeiMetadata {
             holder.appendChild(clone);
             exportVideos[cam] = clone;
           }
-          if (!Object.keys(exportVideos).length) { globalOffset += (mergeTelem && mergeTelem.segDur[si]) || 60; continue; }
+          if (!Object.keys(exportVideos).length) continue;
           await Promise.all(Object.values(exportVideos).map(v => new Promise(res => {
             if (v.readyState >= 1) res(); else { v.onloadedmetadata = () => res(); setTimeout(res, 5000); }
           })));
@@ -2615,15 +2655,22 @@ message SeiMetadata {
           const nameTs = ((seg.clips[tsBaseCam] || {}).name || '').match(/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/);
           const segTsBase = parseTeslaBaseTime(nameTs ? nameTs[0] : seg.timestamp);
 
-          Object.values(exportVideos).forEach(v => { try { v.currentTime = 0; } catch (e) {} });
+          // seek to the in-segment start of the time range
+          await Promise.all(Object.values(exportVideos).map(v => new Promise(res => {
+            try {
+              if (Math.abs((v.currentTime || 0) - localStart) < 0.05) return res();
+              v.addEventListener('seeked', () => res(), { once: true });
+              v.currentTime = localStart;
+              setTimeout(res, 1500);
+            } catch (e) { res(); }
+          })));
           await Promise.all(Object.values(exportVideos).map(v => v.play().catch(() => {})));
           const ref = exportVideos[camList[0]];
-          const segDur = (ref && isFinite(ref.duration) && ref.duration > 0) ? ref.duration : ((mergeTelem && mergeTelem.segDur[si]) || 60);
-          const goff = globalOffset;
+          const goff = cumStart;
 
           await new Promise(resolve => {
             let lastT = -1, stalls = 0, segStopped = false;
-            const segSafety = setTimeout(() => { segStopped = true; resolve(); }, (segDur * 1.6 + 12) * 1000);
+            const segSafety = setTimeout(() => { segStopped = true; resolve(); }, ((localEnd - localStart) * 1.6 + 12) * 1000);
             const endSeg = () => { if (segStopped) return; segStopped = true; clearTimeout(segSafety); Object.values(exportVideos).forEach(v => { try { v.pause(); } catch (e) {} }); resolve(); };
             const tick = () => {
               if (segStopped) return;
@@ -2631,16 +2678,15 @@ message SeiMetadata {
               const refT = ref ? ref.currentTime : 0;
               drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, wm, segTsBase, tsBaseCam, goff + refT);
               if (supportsManual && vtrack.requestFrame) vtrack.requestFrame();
-              setExportProgress(Math.min(99, Math.round(((si + Math.min(1, refT / segDur)) / segs.length) * 100)), `匯出中… (${si + 1}/${segs.length})`);
+              setExportProgress(Math.min(99, Math.round(((cumStart + refT - rangeStart) / recordedTotal) * 100)), `匯出中… (${si + 1}/${segs.length})`);
               if (Math.abs(refT - lastT) < 1e-3) { if (++stalls === 30 && ref && ref.paused) ref.play().catch(() => {}); }
               else { stalls = 0; lastT = refT; }
-              if ((ref && ref.ended) || refT >= segDur - 0.04) { endSeg(); return; }
+              if ((ref && ref.ended) || refT >= localEnd - 0.04) { endSeg(); return; }
               requestAnimationFrame(tick);
             };
             tick();
           });
 
-          globalOffset += segDur;
           Object.values(exportVideos).forEach(v => { try { holder.removeChild(v); } catch (e) {} });
           urls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
         }
@@ -2666,8 +2712,7 @@ message SeiMetadata {
 
     async function runExport(opts) {
       if (opts.mergeSession) {
-        const r = opts.segRange || [1, session.length];
-        return runMergeExport({ cameras: opts.cameras, quality: opts.quality, segments: session.slice(r[0] - 1, r[1]) });
+        return runMergeExport({ cameras: opts.cameras, quality: opts.quality, segments: session.slice(), rangeStart: opts.rangeStart || 0, rangeEnd: (opts.rangeEnd == null ? Infinity : opts.rangeEnd) });
       }
       isExporting = true;
       exportCancel = false;
