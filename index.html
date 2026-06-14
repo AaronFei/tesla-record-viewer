@@ -253,7 +253,8 @@
       pointer-events: none;
     }
     #telemetry-map.hidden { display: none; }
-    #telemetry-map #t-map { width: 130px; height: 130px; border-radius: 12px; background: #0f1115; border: 1px solid #3f3f46; }
+    #telemetry-map #t-map { width: 130px; height: 130px; border-radius: 12px; background: #0f1115; border: 1px solid #3f3f46; pointer-events: auto; cursor: zoom-in; }
+    #telemetry-map.expanded #t-map { cursor: zoom-out; }
     #telemetry-map .tmaplink { pointer-events: auto; font-size: 11px; color: #93c5fd; text-decoration: underline; background: rgba(0,0,0,0.5); padding: 1px 8px; border-radius: 6px; }
     #telemetry-map .tmaplink:hover { color: #fff; }
 
@@ -575,9 +576,9 @@
           </div>
         </div>
 
-        <!-- GPS path-trace minimap (bottom-right corner) -->
+        <!-- GPS path-trace minimap (bottom-right corner; click to enlarge) -->
         <div id="telemetry-map" class="hidden">
-          <canvas id="t-map" width="130" height="130"></canvas>
+          <canvas id="t-map" width="130" height="130" onclick="toggleMapExpand()" title="點擊放大／縮小"></canvas>
           <a id="t-map-link" href="#" target="_blank" rel="noopener" class="tmaplink">Google 地圖 ↗</a>
         </div>
       </div>
@@ -1849,7 +1850,19 @@ message SeiMetadata {
       if (!canvas || !telemetry || !telemetry.route || !telemetry.route.hasGps) return;
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      paintRouteMap(ctx, 0, 0, canvas.width, telemetry.route, tSec, canvas.width / 120, telemetry.mapBg);
+      paintRouteMap(ctx, 0, 0, canvas.width, telemetry.route, tSec, canvas.width / 130, telemetry.mapBg);
+    }
+
+    // Click the minimap to enlarge it (and back)
+    function toggleMapExpand() {
+      const wrap = document.getElementById('telemetry-map');
+      const canvas = document.getElementById('t-map');
+      if (!wrap || !canvas) return;
+      const expanded = wrap.classList.toggle('expanded');
+      const sz = expanded ? Math.round(Math.min(380, window.innerHeight * 0.6, window.innerWidth * 0.6)) : 130;
+      canvas.width = sz; canvas.height = sz;
+      canvas.style.width = sz + 'px'; canvas.style.height = sz + 'px';
+      drawMinimap(telemLookupTime(masterVideo ? masterVideo.currentTime : 0));
     }
 
     function currentGps(tSec) {
