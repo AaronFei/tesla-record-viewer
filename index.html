@@ -222,8 +222,6 @@
     }
     /* ID-specificity display:flex above would beat Tailwind .hidden, so override it here */
     #telemetry-hud.hidden { display: none; }
-    /* Active state for the front-camera stabilize toggle */
-    #stab-btn.stab-on { background: rgba(232,33,39,0.15); border-color: #e82127; color: #fca5a5; }
     #telemetry-hud .tspeed { display: flex; flex-direction: column; align-items: center; color: #fff; line-height: 1; }
     #telemetry-hud #t-speed-val { font-size: 32px; font-weight: 800; }
     #telemetry-hud .tunit { font-size: 10px; color: #94a3b8; margin-top: 2px; letter-spacing: .05em; }
@@ -352,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.7.3</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.7.4</div>
         </div>
       </div>
       
@@ -1340,7 +1338,6 @@
       highlightSession();
       document.getElementById('player-section').classList.remove('hidden');
       updateSessionHeader();
-      syncStabButton();
       clearMarks();
       resetPreload();
       await loadVideosForEvent(currentEvent);
@@ -1669,9 +1666,6 @@
 
       // Watermark/timestamp only render on the stage; refresh after re-parenting
       updateWatermarkVisibility();
-      // Reset stabilization on any spotlight/segment change (clears a left-behind front transform
-      // and the motion trajectory so we don't carry a stale correction across a discontinuity).
-      resetPreviewStab();
     }
 
     // One UI tick: progress bar + time display (cheap, every frame) and, throttled to ~9Hz, the
@@ -1714,7 +1708,6 @@
         const cb = () => {
           if (vid !== masterVideo || !isPlaying) { stop(); return; }
           playbackTick(false);
-          applyPreviewStab();
           vid.requestVideoFrameCallback(cb);
         };
         vid.requestVideoFrameCallback(cb);
@@ -1722,7 +1715,6 @@
         const loop = () => {
           if (vid !== masterVideo || !isPlaying) { stop(); return; }
           playbackTick(false);
-          applyPreviewStab();
           requestAnimationFrame(loop);
         };
         requestAnimationFrame(loop);
@@ -1747,7 +1739,7 @@
       }
 
       masterVideo.addEventListener('ended', () => { onSegmentEnded(); });
-      masterVideo.addEventListener('seeked', () => { if (previewStab) previewStab.reset(); playbackTick(true); });
+      masterVideo.addEventListener('seeked', () => playbackTick(true));
       masterVideo.addEventListener('play', () => startUiLoop());
       // When the rVFC/rAF loop isn't running (paused, or a browser throttling it), let timeupdate keep the bar alive.
       masterVideo.addEventListener('timeupdate', () => { if (uiLoopVid !== masterVideo) playbackTick(false); });
@@ -1949,94 +1941,6 @@
       Object.values(videos).forEach(v => {
         v.el.playbackRate = speed;
       });
-    }
-
-    // ===== Front-camera digital stabilization (optional, off by default) =====
-    // Per-frame integral-projection motion estimation: downscale the frame, build column/row
-    // intensity projections, find the (dx,dy) shift vs the previous frame, integrate into a
-    // trajectory, low-pass it, and the jitter to cancel = smoothed - raw. Apply the inverse as a
-    // small zoom-crop + translate (zoom is the "lose a little quality" margin that hides the shift).
-    const STAB_ZOOM = 1.08; // medium strength (~8% crop)
-    // DISABLED: real-time integral-projection stabilization didn't work well on forward-driving
-    // dashcam footage (near-zero detectable global motion most of the time + browser-downscale noise
-    // → it mostly just zoomed and injected jitter). Engine kept for a future two-pass export-time
-    // rebuild; forced off so the UI can't enable it.
-    let stabEnabled = false;
-    let previewStab = null;
-    let exportStab = null; // set during export when stabilization is on and 'front' is selected
-
-    function createStabilizer(zoom) {
-      const W = 120, H = 68, SEARCH = 14, SMOOTH = 0.85;
-      zoom = zoom || STAB_ZOOM;
-      const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-      const cx = cv.getContext('2d', { willReadFrequently: true });
-      let traj = { x: 0, y: 0 }, smooth = { x: 0, y: 0 }, prev = null;
-      function proj(src) {
-        try { cx.drawImage(src, 0, 0, W, H); } catch (e) { return null; }
-        let d; try { d = cx.getImageData(0, 0, W, H).data; } catch (e) { return null; }
-        const col = new Float32Array(W), row = new Float32Array(H);
-        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; const g = d[i] + d[i + 1] + d[i + 2]; col[x] += g; row[y] += g; }
-        // mean-subtract so brightness flicker doesn't bias the SAD match
-        let mc = 0; for (let i = 0; i < W; i++) mc += col[i]; mc /= W; for (let i = 0; i < W; i++) col[i] -= mc;
-        let mr = 0; for (let i = 0; i < H; i++) mr += row[i]; mr /= H; for (let i = 0; i < H; i++) row[i] -= mr;
-        return { col, row };
-      }
-      function bestShift(cur, prv, len) {
-        let bs = 0, bsad = Infinity;
-        for (let s = -SEARCH; s <= SEARCH; s++) {
-          let sad = 0, n = 0;
-          for (let i = 0; i < len; i++) { const j = i + s; if (j < 0 || j >= len) continue; sad += Math.abs(cur[i] - prv[j]); n++; }
-          if (n > 3) { sad /= n; if (sad < bsad) { bsad = sad; bs = s; } }
-        }
-        return bs;
-      }
-      return {
-        // returns { ox, oy, zoom } where ox/oy are correction offsets as a fraction of width/height
-        process(src) {
-          const p = proj(src);
-          if (!p) return { ox: 0, oy: 0, zoom };
-          if (prev) {
-            const ddx = bestShift(p.col, prev.col, W), ddy = bestShift(p.row, prev.row, H);
-            traj.x += -ddx; traj.y += -ddy; // image motion = -bestShift (validated)
-            smooth.x = SMOOTH * smooth.x + (1 - SMOOTH) * traj.x;
-            smooth.y = SMOOTH * smooth.y + (1 - SMOOTH) * traj.y;
-          }
-          prev = p;
-          const mx = W * (zoom - 1) / 2, my = H * (zoom - 1) / 2; // crop margin → max shift
-          const cxx = Math.max(-mx, Math.min(mx, smooth.x - traj.x));
-          const cyy = Math.max(-my, Math.min(my, smooth.y - traj.y));
-          return { ox: cxx / W, oy: cyy / H, zoom };
-        },
-        reset() { traj = { x: 0, y: 0 }; smooth = { x: 0, y: 0 }; prev = null; }
-      };
-    }
-
-    function clearStabTransform() {
-      if (videos.front && videos.front.el) videos.front.el.style.transform = '';
-    }
-    function resetPreviewStab() { if (previewStab) previewStab.reset(); clearStabTransform(); }
-
-    // Called every frame from the rVFC/rAF loop — only acts when on and the front cam is the main view.
-    function applyPreviewStab() {
-      if (!stabEnabled || spotlightCam !== 'front') return;
-      const el = videos.front && videos.front.el;
-      if (!el || el.readyState < 2) return;
-      if (!previewStab) previewStab = createStabilizer(STAB_ZOOM);
-      const r = previewStab.process(el);
-      el.style.transformOrigin = 'center';
-      el.style.transform = `scale(${r.zoom}) translate(${r.ox * 100 / r.zoom}%, ${r.oy * 100 / r.zoom}%)`;
-    }
-
-    function toggleStabilize() {
-      stabEnabled = !stabEnabled;
-      try { localStorage.setItem('trv_stab', stabEnabled ? '1' : '0'); } catch (e) {}
-      const b = document.getElementById('stab-btn');
-      if (b) b.classList.toggle('stab-on', stabEnabled);
-      if (stabEnabled) { if (previewStab) previewStab.reset(); } else { resetPreviewStab(); }
-    }
-    function syncStabButton() {
-      const b = document.getElementById('stab-btn');
-      if (b) b.classList.toggle('stab-on', stabEnabled);
     }
 
     // ----- Export in/out marks (set from the player, carried into the export dialog) -----
@@ -2245,17 +2149,25 @@ message SeiMetadata {
         for (const p of route.pts) { minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat); minLng = Math.min(minLng, p.lng); maxLng = Math.max(maxLng, p.lng); }
         const lon2tx = (lon, z) => (lon + 180) / 360 * Math.pow(2, z);
         const lat2ty = (lat, z) => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z); };
-        let z = 17;
+        const TP = 512; // CARTO Voyager @2x tiles (retina, prettier)
+        // The minimap crop is a SQUARE sized to the route's LONGER side. Pick a zoom where that whole
+        // square fits in ~4 tiles, then fetch tiles covering the SQUARE (not just the route bbox) —
+        // otherwise a tall/narrow route's square spills past the tiles and shows black bands.
+        let z = 17, half = 0, side = 0, ccx = 0, ccy = 0;
         for (; z >= 2; z--) {
-          const nx = Math.floor(lon2tx(maxLng, z)) - Math.floor(lon2tx(minLng, z)) + 1;
-          const ny = Math.floor(lat2ty(minLat, z)) - Math.floor(lat2ty(maxLat, z)) + 1;
-          if (nx <= 4 && ny <= 4) break;
+          const gx0 = lon2tx(minLng, z) * TP, gx1 = lon2tx(maxLng, z) * TP;
+          const gy0 = lat2ty(maxLat, z) * TP, gy1 = lat2ty(minLat, z) * TP;
+          const w = gx1 - gx0, h = gy1 - gy0;
+          const pad = Math.max(22, w * 0.12, h * 0.12);
+          half = Math.max(w, h) / 2 + pad; side = half * 2;
+          ccx = (gx0 + gx1) / 2; ccy = (gy0 + gy1) / 2;
+          if (side <= 4 * TP) break;
         }
-        const minTx = Math.floor(lon2tx(minLng, z)), maxTx = Math.floor(lon2tx(maxLng, z));
-        const minTy = Math.floor(lat2ty(maxLat, z)), maxTy = Math.floor(lat2ty(minLat, z));
+        const cropGX0 = ccx - half, cropGY0 = ccy - half;
+        const minTx = Math.floor(cropGX0 / TP), maxTx = Math.floor((cropGX0 + side) / TP);
+        const minTy = Math.floor(cropGY0 / TP), maxTy = Math.floor((cropGY0 + side) / TP);
         const nx = maxTx - minTx + 1, ny = maxTy - minTy + 1;
         if (nx < 1 || ny < 1 || nx > 6 || ny > 6) return null;
-        const TP = 512; // CARTO Voyager @2x tiles (retina, prettier)
         const comp = document.createElement('canvas'); comp.width = nx * TP; comp.height = ny * TP;
         const cctx = comp.getContext('2d');
         const loads = [];
@@ -2270,16 +2182,15 @@ message SeiMetadata {
         }
         const results = await Promise.all(loads);
         if (!results.some(Boolean)) return null;
-        const project = (lat, lng) => ({ px: (lon2tx(lng, z) - minTx) * TP, py: (lat2ty(lat, z) - minTy) * TP });
+        const ox = minTx * TP, oy = minTy * TP;
+        const project = (lat, lng) => ({ px: lon2tx(lng, z) * TP - ox, py: lat2ty(lat, z) * TP - oy });
         // Cache each point's projected pixel coords ONCE (kills per-frame trig in the draw loop)
-        let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
-        for (const p of route.pts) { const q = project(p.lat, p.lng); p.px = q.px; p.py = q.py; mnx = Math.min(mnx, q.px); mny = Math.min(mny, q.py); mxx = Math.max(mxx, q.px); mxy = Math.max(mxy, q.py); }
-        const pad = Math.max(22, (mxx - mnx) * 0.12, (mxy - mny) * 0.12);
-        const cx = (mnx + mxx) / 2, cy = (mny + mxy) / 2, half = Math.max((mxx - mnx) / 2, (mxy - mny) / 2) + pad;
+        for (const p of route.pts) { const q = project(p.lat, p.lng); p.px = q.px; p.py = q.py; }
         // Pre-build a decimated route polyline as a Path2D in projected space, so each frame just
         // strokes it natively (with a transform) instead of re-running a JS forEach over thousands of points.
         const routePath = buildDecimatedPath(route.pts, p => [p.px, p.py]);
-        return { img: comp, cropX: cx - half, cropY: cy - half, cropSize: half * 2, project, tp: TP, z, routePath };
+        // The crop is centered on the route and (by construction) fully inside comp → no black edges.
+        return { img: comp, cropX: cropGX0 - ox, cropY: cropGY0 - oy, cropSize: side, project, tp: TP, z, routePath };
       } catch (e) { return null; }
     }
 
@@ -2753,7 +2664,6 @@ message SeiMetadata {
       const composite = document.getElementById('export-composite').checked;
       const startSec = +document.getElementById('export-start').value;
       const endSec = +document.getElementById('export-end').value;
-      const stabilize = false; // front-camera stabilization disabled (see notes); kept off for now
       const mergeSession = !!(session && session.length > 1);
       let rangeStart = 0, rangeEnd = Infinity;
       if (mergeSession) {
@@ -2762,7 +2672,7 @@ message SeiMetadata {
         if (rangeEnd <= rangeStart) { alert('結束時間需大於起始時間'); return; }
       }
       closeExportModal();
-      runExport({ cameras: checked, quality, composite, startSec, endSec, stabilize, mergeSession, rangeStart, rangeEnd });
+      runExport({ cameras: checked, quality, composite, startSec, endSec, mergeSession, rangeStart, rangeEnd });
     }
 
     function setExportProgress(pct, title) {
@@ -2944,18 +2854,7 @@ message SeiMetadata {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       layout.forEach(([cam, x, y, w, h]) => {
         const vid = exportVideos[cam];
-        if (!vid || vid.readyState < 2) return;
-        if (cam === 'front' && exportStab) {
-          // Stabilize the front cell: zoom-crop + shift by the per-frame correction, clipped to the cell.
-          const r = exportStab.process(vid);
-          ctx.save();
-          ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
-          const dw = w * r.zoom, dh = h * r.zoom;
-          drawContain(ctx, vid, x - (dw - w) / 2 + r.ox * w, y - (dh - h) / 2 + r.oy * h, dw, dh);
-          ctx.restore();
-        } else {
-          drawContain(ctx, vid, x, y, w, h);
-        }
+        if (vid && vid.readyState >= 2) drawContain(ctx, vid, x, y, w, h);
       });
 
       // Composite: label each cell with its camera (top-row labels clear a top watermark)
@@ -3060,7 +2959,6 @@ message SeiMetadata {
       const segs = opts.segments;
 
       isExporting = true; exportCancel = false;
-      exportStab = (opts.stabilize && camList.includes('front')) ? createStabilizer(STAB_ZOOM) : null;
       setLeftPaneLocked(true);
       setExportProgress(0, '準備中…');
       document.getElementById('export-progress').classList.remove('hidden');
@@ -3198,7 +3096,6 @@ message SeiMetadata {
           const ref = exportVideos[camList[0]];
           const goff = cumStart;
           exportVideoEls = Object.values(exportVideos);
-          if (exportStab) exportStab.reset(); // fresh clip → reset motion trajectory (avoid cross-clip jump)
 
           await new Promise(resolve => {
             let lastT = -1, lastDrawT = -1, stalls = 0, segStopped = false;
@@ -3248,7 +3145,7 @@ message SeiMetadata {
         alert('合併匯出失敗：' + (err && err.message));
       } finally {
         telemetry = savedTelemetry; telemetryEnabled = savedEnabled;
-        isExporting = false; exportRecorder = null; exportStab = null;
+        isExporting = false; exportRecorder = null;
         exportPaused = false; exportVideoEls = []; exportSegControl = null;
         document.getElementById('export-progress').classList.add('hidden');
         setLeftPaneLocked(false);
@@ -3263,7 +3160,6 @@ message SeiMetadata {
       }
       isExporting = true;
       exportCancel = false;
-      exportStab = (opts.stabilize && opts.cameras.includes('front')) ? createStabilizer(STAB_ZOOM) : null;
       setLeftPaneLocked(true);
       setExportProgress(0, '準備中…');
       document.getElementById('export-progress').classList.remove('hidden');
@@ -3296,7 +3192,7 @@ message SeiMetadata {
         }
       } finally {
         isExporting = false;
-        exportRecorder = null; exportStab = null;
+        exportRecorder = null;
         exportPaused = false; exportVideoEls = []; exportSegControl = null;
         document.getElementById('export-progress').classList.add('hidden');
         setLeftPaneLocked(false);
@@ -3416,7 +3312,6 @@ message SeiMetadata {
       recorder.start();
       await Promise.all(Object.values(exportVideos).map(v => v.play().catch(() => {})));
       exportVideoEls = Object.values(exportVideos);
-      if (exportStab) exportStab.reset(); // fresh clip → reset motion trajectory
 
       let stopped = false;
       // Pause-aware safety timer (suspended while the tab is hidden)
