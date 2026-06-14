@@ -198,33 +198,37 @@
     /* ---- Telemetry HUD ---- */
     #telemetry-hud {
       position: absolute;
-      left: 18px;
-      bottom: 18px;
+      left: 16px;
+      bottom: 16px;
       z-index: 30;
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      padding: 10px 14px;
-      background: rgba(0,0,0,0.55);
-      -webkit-backdrop-filter: blur(6px);
-      backdrop-filter: blur(6px);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 14px;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 18px;
+      background: rgba(0,0,0,0.62);
+      -webkit-backdrop-filter: blur(8px);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 16px;
       pointer-events: none;
       font-variant-numeric: tabular-nums;
+      min-width: 150px;
     }
-    #telemetry-hud .thud-top { display: flex; align-items: center; gap: 14px; }
-    #telemetry-hud .tspeed { display: flex; align-items: baseline; gap: 4px; color: #fff; }
-    #telemetry-hud #t-speed-val { font-size: 34px; font-weight: 700; line-height: 1; }
-    #telemetry-hud .tunit { font-size: 12px; color: #cbd5e1; }
-    #telemetry-hud .tblink { font-size: 26px; color: #3f3f46; }
-    #telemetry-hud .tblink.on { color: #22c55e; text-shadow: 0 0 10px rgba(34,197,94,.8); animation: tblinkpulse .9s ease-in-out infinite; }
-    @keyframes tblinkpulse { 50% { opacity: .25; } }
-    #telemetry-hud .thud-bot { display: flex; gap: 6px; }
-    #telemetry-hud .tpill { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: #27272a; color: #e4e4e7; }
-    #telemetry-hud .tpill-off { opacity: .35; }
-    #telemetry-hud .tpill.brake-on { background: #7f1d1d; color: #fecaca; opacity: 1; }
-    #telemetry-hud .tpill.ap-on { background: #1e3a8a; color: #bfdbfe; opacity: 1; }
+    /* ID-specificity display:flex above would beat Tailwind .hidden, so override it here */
+    #telemetry-hud.hidden { display: none; }
+    #telemetry-hud .thud-top { display: flex; align-items: center; justify-content: center; gap: 16px; }
+    #telemetry-hud .tspeed { display: flex; flex-direction: column; align-items: center; color: #fff; line-height: 1; }
+    #telemetry-hud #t-speed-val { font-size: 40px; font-weight: 800; }
+    #telemetry-hud .tunit { font-size: 11px; color: #94a3b8; margin-top: 3px; letter-spacing: .05em; }
+    #telemetry-hud .tblink { font-size: 24px; color: #52525b; opacity: .25; }
+    #telemetry-hud .tblink.on { color: #22c55e; opacity: 1; text-shadow: 0 0 12px rgba(34,197,94,.9); animation: tblinkpulse .8s steps(1) infinite; }
+    @keyframes tblinkpulse { 50% { opacity: .2; } }
+    #telemetry-hud .thud-bot { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+    #telemetry-hud .tpill { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+    #telemetry-hud .tgear { background: #ffffff; color: #111; }
+    #telemetry-hud .tbrake { background: #dc2626; color: #fff; }
+    #telemetry-hud .tap { background: #2563eb; color: #fff; }
 
     /* ---- Spotlight player (main view + thumbnail strip) ---- */
     #player-stage {
@@ -507,14 +511,14 @@
         <!-- Telemetry HUD (populated after the user parses SEI) -->
         <div id="telemetry-hud" class="hidden">
           <div class="thud-top">
-            <i id="t-blink-left" class="fa-solid fa-caret-left tblink"></i>
+            <i id="t-blink-left" class="fa-solid fa-caret-left tblink" title="左方向燈"></i>
             <div class="tspeed"><span id="t-speed-val">0</span><span class="tunit">km/h</span></div>
-            <i id="t-blink-right" class="fa-solid fa-caret-right tblink"></i>
+            <i id="t-blink-right" class="fa-solid fa-caret-right tblink" title="右方向燈"></i>
           </div>
           <div class="thud-bot">
-            <span id="t-gear" class="tpill">P</span>
-            <span id="t-brake" class="tpill tpill-off">煞車</span>
-            <span id="t-ap" class="tpill tpill-off">AP</span>
+            <span id="t-gear" class="tpill tgear">P</span>
+            <span id="t-brake" class="tpill tbrake" style="display:none">煞車</span>
+            <span id="t-ap" class="tpill tap" style="display:none">Autopilot</span>
           </div>
         </div>
       </div>
@@ -616,8 +620,9 @@
       <div class="flex items-center gap-3 mb-5">
         <label class="text-xs text-zinc-400">畫質</label>
         <select id="export-quality" class="bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-1.5 text-sm focus:outline-none">
-          <option value="high">高畫質（清晰、檔案較大）</option>
-          <option value="std">標準（檔案較小）</option>
+          <option value="max">最高畫質（原生解析度 / 較慢、檔案大）</option>
+          <option value="high" selected>高畫質（1080p）</option>
+          <option value="std">標準（720p / 檔案小）</option>
         </select>
         <span id="export-format-note" class="text-[11px] text-zinc-500 ml-auto"></span>
       </div>
@@ -1639,14 +1644,11 @@ message SeiMetadata {
       document.getElementById('t-blink-right').classList.toggle('on', !!sei.blinkerOnRight);
       document.getElementById('t-gear').textContent = GEAR_LABEL[sei.gearState] || 'P';
 
-      const brake = document.getElementById('t-brake');
-      brake.classList.toggle('brake-on', !!sei.brakeApplied);
-      brake.classList.toggle('tpill-off', !sei.brakeApplied);
-
+      // Brake / Autopilot: only show when actually active (clearer than always-on greyed pills)
+      document.getElementById('t-brake').style.display = sei.brakeApplied ? '' : 'none';
       const ap = document.getElementById('t-ap');
       const apTxt = AP_LABEL[sei.autopilotState] || '';
-      if (apTxt) { ap.textContent = apTxt; ap.classList.add('ap-on'); ap.classList.remove('tpill-off'); }
-      else { ap.textContent = 'AP'; ap.classList.remove('ap-on'); ap.classList.add('tpill-off'); }
+      if (apTxt) { ap.textContent = apTxt; ap.style.display = ''; } else { ap.style.display = 'none'; }
     }
 
     // Listen to watermark input changes live
@@ -1819,7 +1821,9 @@ message SeiMetadata {
       const fmt = pickExportFormat();
       const QUAL = spec.quality === 'std'
         ? { gridW: 1280, gridH: 720, singleMaxW: 1280, bitrate: 8_000_000 }
-        : { gridW: 1920, gridH: 1080, singleMaxW: 1920, bitrate: 20_000_000 };
+        : spec.quality === 'max'
+          ? { gridW: 2560, gridH: 1440, singleMaxW: 100000, bitrate: 40_000_000 } // single = native res
+          : { gridW: 1920, gridH: 1080, singleMaxW: 1920, bitrate: 20_000_000 };
 
       const camList = spec.cameras.slice().sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
       const tsBaseCam = camList.includes('front') ? 'front' : camList[0];
