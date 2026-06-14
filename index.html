@@ -350,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.3.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.4.0</div>
         </div>
       </div>
       
@@ -693,14 +693,9 @@
         <span>合成為單一畫面<span class="block text-[11px] text-zinc-500">勾選：多鏡頭合併成一個畫面。<b>取消勾選</b>：每個鏡頭<b>分別匯出</b>成各自的檔案（原生解析度）。</span></span>
       </label>
 
-      <label id="export-merge-wrap" class="hidden flex items-start gap-2 text-sm mb-3 cursor-pointer select-none">
-        <input type="checkbox" id="export-merge" checked class="accent-[#e82127] mt-0.5">
-        <span>連續合併輸出（<span id="export-merge-count">0</span> 段串成一支）<span class="block text-[11px] text-zinc-500">把選取的連續分段接成一支影片；GPS 與遙測也會串成連續的。取消勾選則只輸出目前這一段。</span></span>
-      </label>
-
       <div id="export-segrange-wrap" class="hidden mb-4">
         <div class="flex justify-between text-xs text-zinc-400 mb-1">
-          <span>輸出時間範圍（整串連續）</span>
+          <span>輸出時間範圍（<span id="export-merge-count">0</span> 段連續，自動串成一支）</span>
           <span class="font-mono text-zinc-300">總長 <span id="export-total-label">0:00</span></span>
         </div>
         <div class="flex items-center gap-2 text-sm flex-wrap">
@@ -748,7 +743,7 @@
       <div class="h-2 bg-zinc-800 rounded-full overflow-hidden mb-4">
         <div id="export-progress-bar" class="h-full bg-[#e82127]" style="width:0%; transition: width .15s ease;"></div>
       </div>
-      <div class="text-[11px] text-zinc-500 mb-3">匯出期間請勿切換分頁；左側清單已鎖定。</div>
+      <div class="text-[11px] text-zinc-500 mb-3">切換分頁會自動暫停、回來後繼續；左側清單已鎖定。</div>
       <button onclick="cancelExport()" class="px-4 py-1.5 text-sm border border-zinc-700 rounded-xl hover:bg-zinc-800">取消 (Esc)</button>
     </div>
   </div>
@@ -1484,6 +1479,17 @@
           </div>`;
         const videoEl = wrapper.querySelector('video');
         videoEl.src = url; videoEl.dataset.camera = cam; videoEl.muted = true;
+        // Warm the decode pipeline: briefly play→pause→rewind so frame 0 is already
+        // decoded & painted. Without this, mount+play at the segment boundary has to
+        // cold-start the decoder, which shows as a short pause. Done off-screen, ~50s ahead.
+        videoEl.addEventListener('loadeddata', () => {
+          try {
+            const p = videoEl.play();
+            if (p && p.then) p.then(() => {
+              try { videoEl.pause(); if (videoEl.currentTime > 0.04) videoEl.currentTime = 0; } catch (e) {}
+            }).catch(() => {});
+          } catch (e) {}
+        }, { once: true });
         videoEl.addEventListener('error', () => {
           const badge = document.createElement('div');
           badge.className = 'absolute bottom-1 right-1 text-[9px] px-1.5 py-0.5 bg-red-900/80 text-red-300 rounded';
@@ -2277,6 +2283,29 @@ message SeiMetadata {
     let isExporting = false;
     let exportCancel = false;
     let exportRecorder = null;
+    let exportPaused = false;       // true while the tab is backgrounded mid-export
+    let exportVideoEls = [];        // current segment's source videos (to pause/resume)
+    let exportSegControl = null;    // { onPause, onResume } for the active segment's safety timer
+
+    // If the user switches tabs/windows during an export, rAF throttles to ~0 and the
+    // recorder would keep capturing in real time → drift / frozen frames. Pause the whole
+    // pipeline while hidden and resume on return, so the output stays frame-tight.
+    document.addEventListener('visibilitychange', () => {
+      if (!isExporting) return;
+      if (document.hidden) {
+        exportPaused = true;
+        try { if (exportRecorder && exportRecorder.state === 'recording') exportRecorder.pause(); } catch (e) {}
+        exportVideoEls.forEach(v => { try { v.pause(); } catch (e) {} });
+        if (exportSegControl) exportSegControl.onPause();
+        setExportProgress(null, '已暫停（分頁切走）— 回到此分頁即繼續');
+      } else {
+        exportPaused = false;
+        try { if (exportRecorder && exportRecorder.state === 'paused') exportRecorder.resume(); } catch (e) {}
+        exportVideoEls.forEach(v => { try { v.play().catch(() => {}); } catch (e) {} });
+        if (exportSegControl) exportSegControl.onResume();
+        setExportProgress(null, '匯出中…');
+      }
+    });
 
     // Pick the best supported container; prefer MP4 (H.264), fall back to WebM.
     function pickExportFormat() {
@@ -2307,26 +2336,19 @@ message SeiMetadata {
       const fmt = pickExportFormat();
       document.getElementById('export-format-note').textContent = '格式：' + fmt.label;
 
-      // Continuous-session merge option (only when a multi-segment session is selected)
+      // Session (multi-segment continuous) → a single time-range box that always merges the
+      // chosen span into one clip. Single clip → trim sliders. The range comes from the
+      // 起點/終點 marks set in the player (no separate "merge?" toggle needed).
       const isSession = session && session.length > 1;
-      const mergeWrap = document.getElementById('export-merge-wrap');
-      mergeWrap.classList.toggle('hidden', !isSession);
-      if (isSession) document.getElementById('export-merge-count').textContent = session.length;
-      const mergeChk = document.getElementById('export-merge');
-      mergeChk.checked = isSession;
-      // Time-range inputs — pre-filled from the in/out marks set in the player
+      document.getElementById('export-segrange-wrap').classList.toggle('hidden', !isSession);
+      document.getElementById('export-trim-wrap').style.display = isSession ? 'none' : '';
       if (isSession) {
+        document.getElementById('export-merge-count').textContent = session.length;
         const total = sessionDurations().reduce((a, b) => a + b, 0);
         document.getElementById('export-total-label').textContent = formatTime(total);
         document.getElementById('export-time-start').value = formatTime(markIn != null ? markIn : 0);
         document.getElementById('export-time-end').value = formatTime(markOut != null ? markOut : total);
       }
-      const syncMergeUI = () => {
-        const merging = isSession && mergeChk.checked;
-        document.getElementById('export-segrange-wrap').classList.toggle('hidden', !merging);
-        document.getElementById('export-trim-wrap').style.display = merging ? 'none' : '';
-      };
-      mergeChk.onchange = syncMergeUI; syncMergeUI();
 
       // Trim range (single-clip export) — pre-fill from marks that fall inside this clip
       const dur = (masterVideo && isFinite(masterVideo.duration) && masterVideo.duration > 0) ? masterVideo.duration : 60;
@@ -2376,7 +2398,7 @@ message SeiMetadata {
       const composite = document.getElementById('export-composite').checked;
       const startSec = +document.getElementById('export-start').value;
       const endSec = +document.getElementById('export-end').value;
-      const mergeSession = !!(session && session.length > 1) && document.getElementById('export-merge').checked;
+      const mergeSession = !!(session && session.length > 1);
       let rangeStart = 0, rangeEnd = Infinity;
       if (mergeSession) {
         rangeStart = parseTimeInput(document.getElementById('export-time-start').value);
@@ -2388,8 +2410,10 @@ message SeiMetadata {
     }
 
     function setExportProgress(pct, title) {
-      document.getElementById('export-progress-pct').textContent = pct;
-      document.getElementById('export-progress-bar').style.width = pct + '%';
+      if (pct != null) {
+        document.getElementById('export-progress-pct').textContent = pct;
+        document.getElementById('export-progress-bar').style.width = pct + '%';
+      }
       if (title) document.getElementById('export-progress-title').textContent = title;
     }
     function setLeftPaneLocked(locked) {
@@ -2793,14 +2817,23 @@ message SeiMetadata {
           await Promise.all(Object.values(exportVideos).map(v => v.play().catch(() => {})));
           const ref = exportVideos[camList[0]];
           const goff = cumStart;
+          exportVideoEls = Object.values(exportVideos);
 
           await new Promise(resolve => {
             let lastT = -1, stalls = 0, segStopped = false;
-            const segSafety = setTimeout(() => { segStopped = true; resolve(); }, ((localEnd - localStart) * 1.6 + 12) * 1000);
-            const endSeg = () => { if (segStopped) return; segStopped = true; clearTimeout(segSafety); Object.values(exportVideos).forEach(v => { try { v.pause(); } catch (e) {} }); resolve(); };
+            // Pause-aware safety timer: its countdown is suspended while the tab is hidden
+            // so a long background pause can't trip a premature end-of-segment.
+            let safetyRemaining = ((localEnd - localStart) * 1.6 + 12) * 1000;
+            let safetyAt = performance.now(), safetyTimer = null;
+            const armSafety = () => { safetyAt = performance.now(); safetyTimer = setTimeout(() => { segStopped = true; resolve(); }, safetyRemaining); };
+            const holdSafety = () => { if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; safetyRemaining -= (performance.now() - safetyAt); } };
+            armSafety();
+            exportSegControl = { onPause: holdSafety, onResume: armSafety };
+            const endSeg = () => { if (segStopped) return; segStopped = true; if (safetyTimer) clearTimeout(safetyTimer); exportSegControl = null; Object.values(exportVideos).forEach(v => { try { v.pause(); } catch (e) {} }); resolve(); };
             const tick = () => {
               if (segStopped) return;
               if (exportCancel) { endSeg(); return; }
+              if (exportPaused) { requestAnimationFrame(tick); return; } // frozen while backgrounded
               const refT = ref ? ref.currentTime : 0;
               drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, wm, segTsBase, tsBaseCam, goff + refT);
               if (supportsManual && vtrack.requestFrame) vtrack.requestFrame();
@@ -2813,6 +2846,7 @@ message SeiMetadata {
             tick();
           });
 
+          exportVideoEls = [];
           Object.values(exportVideos).forEach(v => { try { holder.removeChild(v); } catch (e) {} });
           urls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
         }
@@ -2829,6 +2863,7 @@ message SeiMetadata {
       } finally {
         telemetry = savedTelemetry; telemetryEnabled = savedEnabled;
         isExporting = false; exportRecorder = null;
+        exportPaused = false; exportVideoEls = []; exportSegControl = null;
         document.getElementById('export-progress').classList.add('hidden');
         setLeftPaneLocked(false);
         try { document.body.removeChild(holder); } catch (e) {}
@@ -2875,6 +2910,7 @@ message SeiMetadata {
       } finally {
         isExporting = false;
         exportRecorder = null;
+        exportPaused = false; exportVideoEls = []; exportSegControl = null;
         document.getElementById('export-progress').classList.add('hidden');
         setLeftPaneLocked(false);
         if (isPlaying) Object.values(videos).forEach(v => v.el.play().catch(() => {}));
@@ -2992,20 +3028,28 @@ message SeiMetadata {
 
       recorder.start();
       await Promise.all(Object.values(exportVideos).map(v => v.play().catch(() => {})));
+      exportVideoEls = Object.values(exportVideos);
 
       let stopped = false;
+      // Pause-aware safety timer (suspended while the tab is hidden)
+      let safetyRemaining = (span * 1.6 + 12) * 1000, safetyAt = performance.now();
+      const armSafety = () => { safetyAt = performance.now(); safety = setTimeout(stopExport, safetyRemaining); };
+      const holdSafety = () => { if (safety) { clearTimeout(safety); safety = null; safetyRemaining -= (performance.now() - safetyAt); } };
       const stopExport = () => {
         if (stopped) return;
         stopped = true;
         if (safety) clearTimeout(safety);
+        exportSegControl = null; exportVideoEls = [];
         Object.values(exportVideos).forEach(v => { try { v.pause(); } catch (e) {} });
         try { recorder.stop(); } catch (e) {}
       };
+      exportSegControl = { onPause: holdSafety, onResume: armSafety };
       let lastT = -1, stalls = 0;
 
       const drawFrame = () => {
         if (stopped) return;
         if (exportCancel) { stopExport(); return; }
+        if (exportPaused) { requestAnimationFrame(drawFrame); return; } // frozen while backgrounded
 
         drawExportFrame(ctx, canvas, S, exportVideos, camList, layout, { text, pos, opacity, mode }, tsBase, tsBaseCam);
 
@@ -3024,7 +3068,7 @@ message SeiMetadata {
         requestAnimationFrame(drawFrame);
       };
 
-      safety = setTimeout(stopExport, (span * 1.6 + 12) * 1000);
+      armSafety();
       drawFrame();
 
       await donePromise;
