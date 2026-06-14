@@ -258,7 +258,7 @@
     #telemetry-map.expanded #t-map { cursor: zoom-out; }
     #telemetry-map .tmaplink { pointer-events: auto; font-size: 11px; color: #93c5fd; text-decoration: underline; background: rgba(0,0,0,0.5); padding: 1px 8px; border-radius: 6px; }
     #telemetry-map .tmaplink:hover { color: #fff; }
-    #telemetry-follow #t-follow { width: 190px; height: 190px; border-radius: 14px; background: #0f1115; border: 1px solid #3f3f46; pointer-events: auto; cursor: zoom-in; }
+    #telemetry-follow #t-follow { width: 230px; height: 230px; border-radius: 14px; background: #0f1115; border: 1px solid #3f3f46; pointer-events: auto; cursor: zoom-in; }
     #telemetry-follow.expanded #t-follow { cursor: zoom-out; }
 
     /* ---- Spotlight player (main view + thumbnail strip) ---- */
@@ -352,7 +352,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.1.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.1.1</div>
         </div>
       </div>
       
@@ -582,7 +582,7 @@
         <!-- GPS maps (bottom-right): street-follow view + whole-route minimap -->
         <div id="telemetry-maps">
           <div id="telemetry-follow" class="hidden">
-            <canvas id="t-follow" width="190" height="190" title="街道導航圖"></canvas>
+            <canvas id="t-follow" width="230" height="230" title="街道導航圖"></canvas>
           </div>
           <div id="telemetry-map" class="hidden">
             <canvas id="t-map" width="130" height="130" onclick="toggleMapExpand()" title="點擊放大／縮小"></canvas>
@@ -1240,23 +1240,24 @@
       });
     }
 
-    // Detect the run of consecutive ~1-minute segments starting at ev (same category,
-    // each clip ~60s after the previous). Returns [ev] if nothing follows.
+    // The full run of consecutive ~1-minute segments containing ev (same category, each
+    // clip ~60s apart) — expands BOTH backward and forward. Returns [ev] if it stands alone.
     function buildSession(ev) {
       const cat = ev.category || 'Other';
       const list = events.filter(e => (e.category || 'Other') === cat)
         .slice().sort((a, b) => a.timestamp.localeCompare(b.timestamp));
       const idx = list.findIndex(e => e.key === ev.key);
       if (idx < 0) return [ev];
-      const sess = [list[idx]];
-      for (let i = idx; i < list.length - 1 && sess.length < 60; i++) {
-        const t1 = parseTeslaBaseTime(list[i].timestamp);
-        const t2 = parseTeslaBaseTime(list[i + 1].timestamp);
-        if (!t1 || !t2) break;
+      const contiguous = (a, b) => {
+        const t1 = parseTeslaBaseTime(a.timestamp), t2 = parseTeslaBaseTime(b.timestamp);
+        if (!t1 || !t2) return false;
         const gap = (t2 - t1) / 1000;
-        if (gap >= 45 && gap <= 95) sess.push(list[i + 1]); else break;
-      }
-      return sess;
+        return gap >= 45 && gap <= 95;
+      };
+      let lo = idx, hi = idx;
+      while (lo > 0 && contiguous(list[lo - 1], list[lo]) && (hi - lo + 1) < 60) lo--;
+      while (hi < list.length - 1 && contiguous(list[hi], list[hi + 1]) && (hi - lo + 1) < 60) hi++;
+      return list.slice(lo, hi + 1);
     }
 
     function highlightSession() {
@@ -1278,8 +1279,8 @@
     async function selectEvent(eventData, cardEl = null) {
       if (isExporting) return; // left pane is locked during export
       session = continuousMode ? buildSession(eventData) : [eventData];
-      sessionIdx = 0;
-      currentEvent = session[0];
+      sessionIdx = Math.max(0, session.findIndex(e => e.key === eventData.key));
+      currentEvent = session[sessionIdx];
       highlightSession();
       document.getElementById('player-section').classList.remove('hidden');
       updateSessionHeader();
@@ -1881,7 +1882,10 @@ message SeiMetadata {
       for (const p of route.pts) { if (p.t <= tSec) cur = p; else break; }
       if (mapBg && mapBg.img && cur) {
         const q = mapBg.project(cur.lat, cur.lng);
-        const win = Math.min(mapBg.tp * 1.5, mapBg.img.width, mapBg.img.height);
+        // Fixed ~240 m view (street level) regardless of route length
+        const mpp = 40075017 * Math.cos(cur.lat * Math.PI / 180) / (Math.pow(2, mapBg.z) * mapBg.tp);
+        let win = 240 / mpp;
+        win = Math.max(mapBg.tp * 0.35, Math.min(win, mapBg.img.width, mapBg.img.height));
         const sx = q.px - win / 2, sy = q.py - win / 2;
         ctx.drawImage(mapBg.img, sx, sy, win, win, x, y, size, size);
         ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 3.5 * S; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
