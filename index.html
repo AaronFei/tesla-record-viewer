@@ -2008,6 +2008,61 @@ message SeiMetadata {
       ctx.restore();
     }
 
+    // G-force ball for export burn-in (lon = forward+, lat = right+, m/s^2)
+    function drawGBall(ctx, cx, cy, r, lon, lat, S) {
+      const G = 9.81, RANGE = 0.6 * G;
+      ctx.save();
+      ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2 * S;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1 * S;
+      ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
+      const nx = Math.max(-1, Math.min(1, (lat || 0) / RANGE));
+      const ny = Math.max(-1, Math.min(1, (lon || 0) / RANGE));
+      ctx.fillStyle = '#e82127';
+      ctx.beginPath(); ctx.arc(cx + nx * r, cy - ny * r, r * 0.22, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+
+    // Compass for export burn-in
+    function drawCompass(ctx, cx, cy, r, headingDeg, S) {
+      ctx.save();
+      ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2 * S;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.save();
+      ctx.translate(cx, cy); ctx.rotate(-(headingDeg || 0) * Math.PI / 180);
+      ctx.fillStyle = '#f87171'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = `700 ${Math.round(12 * S)}px system-ui, sans-serif`;
+      ctx.fillText('N', 0, -r * 0.62);
+      ctx.restore();
+      ctx.fillStyle = '#e2e8f0';
+      ctx.beginPath(); ctx.moveTo(cx, cy - r * 0.5); ctx.lineTo(cx - r * 0.18, cy - r * 0.02); ctx.lineTo(cx + r * 0.18, cy - r * 0.02); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      ctx.textBaseline = 'alphabetic';
+    }
+
+    // GPS path-trace minimap for export burn-in
+    function drawExportMinimap(ctx, x, y, size, route, tSec, S) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(15,17,21,0.92)';
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, size, size, 8 * S); ctx.fill(); }
+      else ctx.fillRect(x, y, size, size);
+      if (route && route.hasGps && route.pts.length >= 2) {
+        const pad = 8 * S;
+        const X = nx => x + pad + nx * (size - 2 * pad);
+        const Y = ny => y + pad + ny * (size - 2 * pad);
+        ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2 * S; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath();
+        route.pts.forEach((p, i) => { const px = X(p.nx), py = Y(p.ny); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+        ctx.stroke();
+        let cur = route.pts[0];
+        for (const p of route.pts) { if (p.t <= tSec) cur = p; else break; }
+        ctx.fillStyle = '#e82127';
+        ctx.beginPath(); ctx.arc(X(cur.nx), Y(cur.ny), 4 * S, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 * S; ctx.stroke();
+      }
+      ctx.restore();
+    }
+
     async function runExport(opts) {
       isExporting = true;
       exportCancel = false;
@@ -2211,7 +2266,7 @@ message SeiMetadata {
           ctx.restore();
         }
 
-        // Telemetry HUD burn-in (bottom-left), scaled
+        // Telemetry HUD burn-in (bottom-left), scaled, honoring the display toggles
         if (telemetryEnabled && telemetry) {
           const refTb = ref ? ref.currentTime : 0;
           const sei = findSeiAt(refTb);
@@ -2227,33 +2282,48 @@ message SeiMetadata {
             if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(hx, hy, hw, hh, 14 * S); ctx.fill(); }
             else ctx.fillRect(hx, hy, hw, hh);
 
-            // turn-signal arrows (flash synthesized from time when engaged)
             ctx.textAlign = 'center';
-            ctx.font = `700 ${Math.round(24 * S)}px system-ui, sans-serif`;
-            ctx.fillStyle = (sei.blinkerOnLeft && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)';
-            ctx.fillText('◀', hx + 22 * S, hy + 42 * S);
-            ctx.fillStyle = (sei.blinkerOnRight && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)';
-            ctx.fillText('▶', hx + 152 * S, hy + 42 * S);
-
-            // speed (km/h)
+            if (telemShow.blinkers) {
+              ctx.font = `700 ${Math.round(24 * S)}px system-ui, sans-serif`;
+              ctx.fillStyle = (sei.blinkerOnLeft && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)';
+              ctx.fillText('◀', hx + 22 * S, hy + 42 * S);
+              ctx.fillStyle = (sei.blinkerOnRight && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)';
+              ctx.fillText('▶', hx + 152 * S, hy + 42 * S);
+            }
+            if (telemShow.speed) {
+              ctx.fillStyle = '#fff';
+              ctx.font = `800 ${Math.round(34 * S)}px system-ui, sans-serif`;
+              ctx.fillText(String(kmh), hx + 87 * S, hy + 38 * S);
+              ctx.font = `500 ${Math.round(12 * S)}px system-ui, sans-serif`;
+              ctx.fillStyle = '#94a3b8';
+              ctx.fillText('km/h', hx + 87 * S, hy + 58 * S);
+            }
+            if (telemShow.steering) {
+              drawSteeringWheel(ctx, hx + 218 * S, hy + 30 * S, 17 * S, sei.steeringWheelAngle || 0, 3 * S, '#cbd5e1');
+            }
             ctx.fillStyle = '#fff';
-            ctx.font = `800 ${Math.round(34 * S)}px system-ui, sans-serif`;
-            ctx.fillText(String(kmh), hx + 87 * S, hy + 38 * S);
-            ctx.font = `500 ${Math.round(12 * S)}px system-ui, sans-serif`;
-            ctx.fillStyle = '#94a3b8';
-            ctx.fillText('km/h', hx + 87 * S, hy + 58 * S);
+            if (telemShow.gear) { ctx.font = `700 ${Math.round(17 * S)}px system-ui, sans-serif`; ctx.fillText(gear, hx + 272 * S, hy + 26 * S); }
+            if (telemShow.autopilot && ap) { ctx.fillStyle = '#93c5fd'; ctx.font = `600 ${Math.round(11 * S)}px system-ui, sans-serif`; ctx.fillText(ap, hx + 272 * S, hy + 46 * S); }
+            if (telemShow.brake && sei.brakeApplied) { ctx.fillStyle = '#f87171'; ctx.font = `700 ${Math.round(11 * S)}px system-ui, sans-serif`; ctx.fillText('煞車', hx + 272 * S, hy + 64 * S); }
 
-            // steering wheel (rotates with steering_wheel_angle, radians)
-            drawSteeringWheel(ctx, hx + 218 * S, hy + 30 * S, 17 * S, sei.steeringWheelAngle || 0, 3 * S, '#cbd5e1');
-
-            // gear + autopilot + brake (right column)
-            ctx.fillStyle = '#fff';
-            ctx.font = `700 ${Math.round(17 * S)}px system-ui, sans-serif`;
-            ctx.fillText(gear, hx + 272 * S, hy + 26 * S);
-            if (ap) { ctx.fillStyle = '#93c5fd'; ctx.font = `600 ${Math.round(11 * S)}px system-ui, sans-serif`; ctx.fillText(ap, hx + 272 * S, hy + 46 * S); }
-            if (sei.brakeApplied) { ctx.fillStyle = '#f87171'; ctx.font = `700 ${Math.round(11 * S)}px system-ui, sans-serif`; ctx.fillText('煞車', hx + 272 * S, hy + 64 * S); }
-
+            // accelerator depth bar under the box
+            if (telemShow.accel) {
+              const bx = hx + 16 * S, by = hy + hh + 8 * S, bw = hw - 32 * S, bh = 7 * S;
+              ctx.fillStyle = '#27272a';
+              if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, bh / 2); ctx.fill(); } else ctx.fillRect(bx, by, bw, bh);
+              ctx.fillStyle = '#22c55e';
+              const fw = bw * Math.max(0, Math.min(1, sei.acceleratorPedalPosition || 0));
+              if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, fw, bh, bh / 2); ctx.fill(); } else ctx.fillRect(bx, by, fw, bh);
+            }
             ctx.restore();
+
+            // instruments to the right of the box: G-ball, compass, minimap
+            let ix = hx + hw + 16 * S;
+            const iy = hy + hh / 2;
+            if (telemShow.gforce) { drawGBall(ctx, ix + 28 * S, iy, 26 * S, sei.linearAccelerationMps2X || 0, sei.linearAccelerationMps2Y || 0, S); ix += 64 * S; }
+            if (telemShow.compass) { drawCompass(ctx, ix + 28 * S, iy, 26 * S, sei.headingDeg || 0, S); ix += 64 * S; }
+            if (telemShow.map && telemetry.route && telemetry.route.hasGps) { const ms = 92 * S; drawExportMinimap(ctx, ix, hy + hh - ms, ms, telemetry.route, refTb, S); }
+
             ctx.textAlign = 'center';
           }
         }
