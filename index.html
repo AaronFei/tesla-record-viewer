@@ -535,11 +535,13 @@
           <i id="t-blink-left" class="fa-solid fa-caret-left tblink" title="左方向燈"></i>
           <div id="tw-speed" class="tspeed"><span id="t-speed-val">0</span><span class="tunit">km/h</span></div>
           <i id="t-blink-right" class="fa-solid fa-caret-right tblink" title="右方向燈"></i>
-          <svg id="tw-steer" class="tsteer" viewBox="0 0 40 40" width="32" height="32" title="方向盤">
-            <circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" stroke-width="3"/>
-            <line x1="5" y1="20" x2="35" y2="20" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-            <path d="M14.9 21.8 L25.1 21.8 L20 33.5 Z" fill="currentColor"/>
-            <circle cx="20" cy="20" r="3.9" fill="currentColor"/>
+          <svg id="tw-steer" class="tsteer" viewBox="0 0 40 40" width="34" height="34" title="方向盤">
+            <g stroke="currentColor" fill="none">
+              <circle cx="20" cy="20" r="12.9" stroke-width="4.2"/>
+              <line x1="6.5" y1="20" x2="33.5" y2="20" stroke-width="4.5" stroke-linecap="round"/>
+              <line x1="20" y1="20" x2="20" y2="33.5" stroke-width="4.5" stroke-linecap="round"/>
+            </g>
+            <circle cx="20" cy="20" r="3.45" fill="currentColor"/>
           </svg>
           <span id="t-gear" class="tpill tgear">P</span>
           <span id="t-ap" class="tpill tap" style="display:none">Autopilot</span>
@@ -1991,16 +1993,19 @@ message SeiMetadata {
       ctx.drawImage(vid, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
     }
 
-    // Draw a round steering wheel on the canvas, rotated by angleRad (export burn-in)
-    function drawYoke(ctx, cx, cy, r, angleRad, lw, color) {
+    // Draw a solid steering wheel (rim + horizontal spoke + bottom spoke + hub), rotated
+    function drawYoke(ctx, cx, cy, R, angleRad, lw, color) {
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate(angleRad || 0);
-      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = lw; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();              // rim
-      ctx.beginPath(); ctx.moveTo(-r, 0); ctx.lineTo(r, 0); ctx.stroke();           // horizontal bar
-      ctx.beginPath(); ctx.moveTo(-r * 0.34, r * 0.12); ctx.lineTo(r * 0.34, r * 0.12); ctx.lineTo(0, r * 0.9); ctx.closePath(); ctx.fill(); // bottom wedge
-      ctx.beginPath(); ctx.arc(0, 0, r * 0.26, 0, Math.PI * 2); ctx.fill();         // hub
+      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineJoin = 'round';
+      const rIn = R * 0.72, rimW = R - rIn, spoke = R * 0.3;
+      ctx.lineCap = 'butt'; ctx.lineWidth = rimW;                                 // rim (annulus)
+      ctx.beginPath(); ctx.arc(0, 0, (R + rIn) / 2, 0, Math.PI * 2); ctx.stroke();
+      ctx.lineCap = 'round'; ctx.lineWidth = spoke;
+      ctx.beginPath(); ctx.moveTo(-R * 0.9, 0); ctx.lineTo(R * 0.9, 0); ctx.stroke(); // horizontal spoke
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, R * 0.9); ctx.stroke();        // bottom spoke
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.23, 0, Math.PI * 2); ctx.fill();           // hub
       ctx.restore();
     }
 
