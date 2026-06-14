@@ -105,8 +105,6 @@
       color: #71717a;
     }
     .events-list {
-      max-height: 280px;
-      overflow-y: auto;
       border: 1px solid #27272a;
       border-top: none;
       border-radius: 0 0 8px 8px;
@@ -184,17 +182,6 @@
         min-height: 0;
       }
       #player-section:not(.hidden) ~ #player-placeholder { display: none; }
-      #video-grid.fit-grid {
-        height: 100%;
-        min-height: 0;
-        grid-auto-rows: 1fr;
-        overflow: hidden;
-      }
-      #video-grid.fit-grid .video-container {
-        aspect-ratio: auto;
-        height: 100%;
-        min-height: 0;
-      }
     }
 
     @media (max-width: 1023px) {
@@ -238,6 +225,59 @@
     #telemetry-hud .tpill-off { opacity: .35; }
     #telemetry-hud .tpill.brake-on { background: #7f1d1d; color: #fecaca; opacity: 1; }
     #telemetry-hud .tpill.ap-on { background: #1e3a8a; color: #bfdbfe; opacity: 1; }
+
+    /* ---- Spotlight player (main view + thumbnail strip) ---- */
+    #player-stage {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0a0a0a;
+      border: 1px solid #27272a;
+      border-radius: 18px;
+      overflow: hidden;
+    }
+    #player-stage .video-wrapper { width: 100%; height: 100%; }
+    #player-stage .video-container {
+      width: 100%;
+      height: 100%;
+      aspect-ratio: auto;
+      border: none;
+      border-radius: 0;
+      background: #000;
+    }
+
+    #thumb-strip {
+      display: flex;
+      gap: 8px;
+      height: 92px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding-bottom: 2px;
+    }
+    #thumb-strip .video-wrapper {
+      height: 100%;
+      flex: 0 0 auto;
+      cursor: pointer;
+    }
+    #thumb-strip .video-container {
+      height: 100%;
+      width: auto;
+      aspect-ratio: 16 / 9;
+      border-radius: 10px;
+      transition: outline-color .1s ease;
+      outline: 2px solid transparent;
+    }
+    #thumb-strip .video-wrapper:hover .video-container { outline-color: #52525b; }
+    #thumb-strip .watermark-overlay { display: none !important; }
+    #thumb-strip .camera-label { font-size: 9px; padding: 1px 5px; top: 4px; left: 4px; }
+
+    /* ---- Collapsible folder sections ---- */
+    .folder-header { cursor: pointer; user-select: none; }
+    .folder-section.collapsed .folder-header { border-radius: 8px; }
+    .folder-chevron { font-size: 10px; transition: transform .15s ease; width: 10px; }
+    .folder-chevron.collapsed { transform: rotate(-90deg); }
     
     .section-title {
       font-size: 13px;
@@ -282,11 +322,16 @@
       </div>
       
       <div class="flex items-center gap-x-2 text-sm">
-        <div class="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center gap-x-2 text-xs">
+        <div onclick="toggleEncNotice()" title="Tesla 2026.20 加密影片說明 / 關閉加密步驟"
+             class="px-3 py-1.5 rounded-lg bg-amber-950/50 border border-amber-900 hover:bg-amber-900/40 cursor-pointer flex items-center gap-x-2 text-xs text-amber-300">
+          <i class="fa-solid fa-lock"></i>
+          <span>加密影片?</span>
+        </div>
+        <div class="hidden sm:flex px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 items-center gap-x-2 text-xs">
           <i class="fa-solid fa-shield-halved text-emerald-400"></i>
           <span class="text-emerald-400 font-medium">100% 本地處理</span>
         </div>
-        <div onclick="showInfo()" 
+        <div onclick="showInfo()"
              class="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 cursor-pointer flex items-center gap-x-2 text-xs">
           <i class="fa-solid fa-info-circle"></i>
           <span>關於</span>
@@ -295,8 +340,8 @@
     </div>
   </div>
 
-  <!-- Top notice (full width, dismissible) -->
-  <div class="shrink-0 w-full max-w-[1700px] mx-auto px-4 pt-3">
+  <!-- Top notice (collapsed by default; opened via the top-bar 加密影片? button) -->
+  <div id="notice-wrap" class="hidden shrink-0 w-full max-w-[1700px] mx-auto px-4 pt-3">
 
     <!-- Encryption notice (Tesla 2026.20+ encrypts dashcam clips) -->
     <div id="encryption-notice" class="mb-6 rounded-2xl border border-amber-900/60 bg-amber-950/40 px-5 py-4">
@@ -458,11 +503,9 @@
         </div>
       </div>
 
-      <!-- Videos Grid (wrapped so the telemetry HUD survives grid re-render) -->
-      <div id="grid-wrap" class="relative flex-1 min-h-0">
-        <div id="video-grid" class="player-grid four fit-grid bg-zinc-900 p-3 rounded-3xl border border-zinc-800">
-          <!-- Video elements injected by JS -->
-        </div>
+      <!-- Spotlight stage (main camera) + telemetry HUD -->
+      <div id="stage-wrap" class="relative flex-1 min-h-0">
+        <div id="player-stage"><!-- spotlighted camera wrapper injected by JS --></div>
 
         <!-- Telemetry HUD (populated after the user parses SEI) -->
         <div id="telemetry-hud" class="hidden">
@@ -478,6 +521,9 @@
           </div>
         </div>
       </div>
+
+      <!-- Thumbnail strip (other cameras; click to swap into the main view) -->
+      <div id="thumb-strip" class="shrink-0"><!-- thumbnail wrappers injected by JS --></div>
 
       <div class="mt-3 text-[11px] text-zinc-500 flex items-center gap-x-2 shrink-0">
         <i class="fa-solid fa-info-circle"></i>
@@ -690,6 +736,7 @@
     let videos = {}; // { camera: HTMLVideoElement }
     let isPlaying = false;
     let masterVideo = null;
+    let spotlightCam = null; // camera currently shown in the main stage
     let timeUpdateInterval = null;
     
     // Supported camera names (case insensitive matching)
@@ -943,16 +990,16 @@
         return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
       });
       
-      for (const cat of categories) {
+      categories.forEach((cat, ci) => {
         const list = buckets[cat];
-        
+
         const section = document.createElement('div');
         section.className = 'folder-section';
-        
+
         const header = document.createElement('div');
         header.className = 'folder-header';
         header.innerHTML = `
-          <span>${cat}</span>
+          <span class="flex items-center gap-1.5"><i class="fa-solid fa-chevron-down folder-chevron"></i>${cat}</span>
           <span class="folder-count">${list.length}</span>
         `;
         section.appendChild(header);
@@ -987,10 +1034,24 @@
         });
         
         section.appendChild(listWrap);
+
+        // Collapsible folder: default-expand only the first group to reduce clutter
+        if (ci > 0) {
+          section.classList.add('collapsed');
+          listWrap.style.display = 'none';
+          header.querySelector('.folder-chevron').classList.add('collapsed');
+        }
+        header.onclick = () => {
+          const hidden = listWrap.style.display === 'none';
+          listWrap.style.display = hidden ? '' : 'none';
+          section.classList.toggle('collapsed', !hidden);
+          header.querySelector('.folder-chevron').classList.toggle('collapsed', !hidden);
+        };
+
         container.appendChild(section);
-      }
+      });
     }
-    
+
     async function selectEvent(eventData, cardEl = null) {
       // Deselect previous
       events.forEach(e => {
@@ -1011,14 +1072,13 @@
     }
     
     async function loadVideosForEvent(eventData) {
-      const grid = document.getElementById('video-grid');
-      
       // Revoke previous object URLs to avoid leaks on rapid event switching
       Object.values(videos).forEach(v => {
         try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {}
       });
-      
-      grid.innerHTML = '';
+
+      document.getElementById('player-stage').innerHTML = '';
+      document.getElementById('thumb-strip').innerHTML = '';
       videos = {};
       masterVideo = null;
       
@@ -1082,9 +1142,10 @@
         videoEl.addEventListener('play', () => {
           if (videoEl !== masterVideo) syncToMaster();
         });
-        
-        grid.appendChild(wrapper);
-        
+
+        // Click a thumbnail to promote that camera to the main stage
+        wrapper.onclick = () => applySpotlight(cam);
+
         // Base time for the live timestamp watermark: prefer this clip's own
         // filename timestamp, fall back to the event timestamp.
         const nameTs = (entry.name || '').match(/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/);
@@ -1110,7 +1171,11 @@
           }
         }));
       }
-      
+
+      // Lay out: front camera (or first available) as the main view, rest as thumbnails
+      spotlightCam = null;
+      applySpotlight(cameras.includes('front') ? 'front' : cameras[0]);
+
       // Wait for basic readiness before resetting controls / enabling the play button.
       // This + muted greatly reduces "videos don't play" races and policy blocks.
       await Promise.all(readyPromises);
@@ -1127,7 +1192,30 @@
       document.getElementById('seek-slider').value = 0;
       document.getElementById('time-display').textContent = '00:00 / 00:00';
     }
-    
+
+    // Promote a camera to the main stage; the rest become the thumbnail strip.
+    // Re-parenting a playing (muted) <video> keeps it playing, so sync is preserved.
+    function applySpotlight(cam) {
+      if (!videos[cam]) cam = Object.keys(videos)[0];
+      if (!cam || cam === spotlightCam) return;
+      spotlightCam = cam;
+
+      const stage = document.getElementById('player-stage');
+      const strip = document.getElementById('thumb-strip');
+      if (!stage || !strip) return;
+      stage.innerHTML = '';
+      strip.innerHTML = '';
+
+      stage.appendChild(videos[cam].wrapper);
+
+      Object.keys(videos)
+        .sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b))
+        .forEach(c => { if (c !== cam) strip.appendChild(videos[c].wrapper); });
+
+      // Watermark/timestamp only render on the stage; refresh after re-parenting
+      updateWatermarkVisibility();
+    }
+
     function attachMasterListeners() {
       if (!masterVideo) return;
       
@@ -1733,9 +1821,11 @@ message SeiMetadata {
       }
       
       document.getElementById('player-section').classList.add('hidden');
-      document.getElementById('video-grid').innerHTML = '';
+      document.getElementById('player-stage').innerHTML = '';
+      document.getElementById('thumb-strip').innerHTML = '';
       videos = {};
       masterVideo = null;
+      spotlightCam = null;
       currentEvent = null;
       isPlaying = false;
       resetTelemetry();
@@ -1811,20 +1901,14 @@ message SeiMetadata {
       if (btn) btn.title = collapsed ? '展開檔案列表' : '收合檔案列表';
     }
 
-    // Encryption notice dismiss (remembers choice)
-    function dismissEncryptionNotice() {
-      const el = document.getElementById('encryption-notice');
-      if (el) el.style.display = 'none';
-      try { localStorage.setItem('trv_hide_enc_notice', '1'); } catch (e) {}
+    // Encryption help notice — collapsed by default, toggled from the top-bar button
+    function toggleEncNotice() {
+      const w = document.getElementById('notice-wrap');
+      if (w) w.classList.toggle('hidden');
     }
-
-    function restoreEncryptionNotice() {
-      try {
-        if (localStorage.getItem('trv_hide_enc_notice') === '1') {
-          const el = document.getElementById('encryption-notice');
-          if (el) el.style.display = 'none';
-        }
-      } catch (e) {}
+    function dismissEncryptionNotice() {
+      const w = document.getElementById('notice-wrap');
+      if (w) w.classList.add('hidden');
     }
 
     // Boot
@@ -1832,8 +1916,7 @@ message SeiMetadata {
       initTailwind();
       bindWatermarkControls();
       setupKeyboard();
-      restoreEncryptionNotice();
-      
+
       // Demo hint for first time (only in console)
       console.log('%c[TeslaRecordViewer] 純本地應用程式已就緒。使用「選擇 TeslaCam 資料夾」開始。', 'color:#555');
       
