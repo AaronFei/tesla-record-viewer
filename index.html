@@ -352,7 +352,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.7.1</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.7.2</div>
         </div>
       </div>
       
@@ -495,65 +495,73 @@
         <span id="current-event-name" class="ml-3 text-sm font-medium text-white"></span>
       </div>
 
-      <!-- Player Controls -->
-      <div class="mb-3 p-4 bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-wrap items-center gap-x-4 gap-y-3 shrink-0">
-        <button onclick="togglePlayAll()" id="play-btn"
-                class="px-5 h-10 flex items-center justify-center gap-x-2 bg-white hover:bg-zinc-100 text-black font-semibold rounded-2xl text-sm w-28">
-          <i class="fa-solid fa-play mr-1" id="play-icon"></i>
-          <span id="play-text">播放</span>
-        </button>
-        
-        <div class="flex items-center gap-x-2 flex-1 min-w-[220px]">
-          <input type="range" id="seek-slider" min="0" max="100" step="0.1" value="0"
-                 class="flex-1 accent-[#e82127]" oninput="seekAll(this.value)">
-          <div id="time-display" class="font-mono text-xs tabular-nums w-28 text-right text-zinc-400">00:00 / 00:00</div>
-        </div>
-        
-        <div class="flex items-center gap-x-1.5">
-          <span class="text-xs text-zinc-500">速度</span>
-          <select id="speed-select" onchange="setPlaybackSpeed(this.value)"
-                  class="bg-zinc-950 border border-zinc-700 text-xs rounded-xl px-3 py-1.5 focus:outline-none">
-            <option value="0.5">0.5×</option>
-            <option value="0.75">0.75×</option>
-            <option value="1" selected>1×</option>
-            <option value="1.5">1.5×</option>
-            <option value="2">2×</option>
-          </select>
-        </div>
+      <!-- Player Controls (two rows: transport on top, tools below) -->
+      <div class="mb-3 p-4 bg-zinc-900 border border-zinc-800 rounded-3xl flex flex-col gap-y-3 shrink-0">
 
-        <!-- Mark in/out for export -->
-        <div class="flex items-center gap-1.5 text-xs pl-2 border-l border-zinc-800">
-          <button onclick="setMark('in')" title="標記匯出起點（目前位置）"
-                  class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 font-mono">⟮ 起點</button>
-          <button onclick="setMark('out')" title="標記匯出終點（目前位置）"
-                  class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 font-mono">終點 ⟯</button>
-          <span id="mark-readout" class="text-zinc-400 font-mono"></span>
-          <button onclick="clearMarks()" id="mark-clear" class="hidden px-1 py-1 text-zinc-500 hover:text-zinc-200" title="清除標記"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-
-        <!-- Front-camera digital stabilization (off by default) -->
-        <div class="flex items-center text-xs pl-2 border-l border-zinc-800">
-          <button onclick="toggleStabilize()" id="stab-btn" title="前鏡頭去震（數位防手震，會稍微放大裁切、損失一點畫質）"
-                  class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 flex items-center gap-1.5"><i class="fa-solid fa-wand-magic-sparkles"></i>穩定</button>
-        </div>
-
-        <div class="flex items-center gap-2 pl-2 border-l border-zinc-800">
-          <button onclick="onTelemetryBtn()" id="telemetry-btn"
-                  class="flex items-center gap-x-2 px-3 py-1.5 text-sm font-medium border border-zinc-700 hover:bg-zinc-800 rounded-2xl transition-colors">
-            <i class="fa-solid fa-gauge-high" id="telemetry-icon"></i>
-            <span id="telemetry-label">解析遙測</span>
+        <!-- Row 1: transport -->
+        <div class="flex items-center gap-x-4">
+          <button onclick="togglePlayAll()" id="play-btn"
+                  class="px-5 h-10 flex items-center justify-center gap-x-2 bg-white hover:bg-zinc-100 text-black font-semibold rounded-2xl text-sm w-28 shrink-0">
+            <i class="fa-solid fa-play mr-1" id="play-icon"></i>
+            <span id="play-text">播放</span>
           </button>
 
-          <label class="flex items-center gap-x-2 text-sm cursor-pointer select-none">
-            <input type="checkbox" id="watermark-toggle" checked onchange="updateWatermarkVisibility()" class="accent-[#e82127]">
-            <span>顯示浮水印</span>
-          </label>
+          <div class="flex items-center gap-x-2 flex-1 min-w-0">
+            <input type="range" id="seek-slider" min="0" max="100" step="0.1" value="0"
+                   class="flex-1 accent-[#e82127]" oninput="seekAll(this.value)">
+            <div id="time-display" class="font-mono text-xs tabular-nums w-28 text-right text-zinc-400 shrink-0">00:00 / 00:00</div>
+          </div>
+        </div>
 
-          <button onclick="openExportModal()"
-                  class="flex items-center gap-x-2 px-4 py-1.5 text-sm font-semibold bg-[#e82127] hover:bg-red-700 active:bg-red-800 rounded-2xl transition-colors">
-            <i class="fa-solid fa-download"></i>
-            <span>匯出影片</span>
-          </button>
+        <!-- Row 2: tools -->
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div class="flex items-center gap-x-1.5">
+            <span class="text-xs text-zinc-500">速度</span>
+            <select id="speed-select" onchange="setPlaybackSpeed(this.value)"
+                    class="bg-zinc-950 border border-zinc-700 text-xs rounded-xl px-3 py-1.5 focus:outline-none">
+              <option value="0.5">0.5×</option>
+              <option value="0.75">0.75×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2×</option>
+            </select>
+          </div>
+
+          <!-- Mark in/out for export -->
+          <div class="flex items-center gap-1.5 text-xs pl-3 border-l border-zinc-800">
+            <button onclick="setMark('in')" title="標記匯出起點（目前位置）"
+                    class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 font-mono">⟮ 起點</button>
+            <button onclick="setMark('out')" title="標記匯出終點（目前位置）"
+                    class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 font-mono">終點 ⟯</button>
+            <span id="mark-readout" class="text-zinc-400 font-mono"></span>
+            <button onclick="clearMarks()" id="mark-clear" class="hidden px-1 py-1 text-zinc-500 hover:text-zinc-200" title="清除標記"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+
+          <!-- Front-camera digital stabilization (off by default) -->
+          <div class="flex items-center text-xs pl-3 border-l border-zinc-800">
+            <button onclick="toggleStabilize()" id="stab-btn" title="前鏡頭去震（數位防手震，會稍微放大裁切、損失一點畫質）"
+                    class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 flex items-center gap-1.5"><i class="fa-solid fa-wand-magic-sparkles"></i>穩定</button>
+          </div>
+
+          <!-- Actions (pushed to the right) -->
+          <div class="flex items-center gap-2 ml-auto pl-3 border-l border-zinc-800">
+            <button onclick="onTelemetryBtn()" id="telemetry-btn"
+                    class="flex items-center gap-x-2 px-3 py-1.5 text-sm font-medium border border-zinc-700 hover:bg-zinc-800 rounded-2xl transition-colors">
+              <i class="fa-solid fa-gauge-high" id="telemetry-icon"></i>
+              <span id="telemetry-label">解析遙測</span>
+            </button>
+
+            <label class="flex items-center gap-x-2 text-sm cursor-pointer select-none">
+              <input type="checkbox" id="watermark-toggle" checked onchange="updateWatermarkVisibility()" class="accent-[#e82127]">
+              <span>顯示浮水印</span>
+            </label>
+
+            <button onclick="openExportModal()"
+                    class="flex items-center gap-x-2 px-4 py-1.5 text-sm font-semibold bg-[#e82127] hover:bg-red-700 active:bg-red-800 rounded-2xl transition-colors">
+              <i class="fa-solid fa-download"></i>
+              <span>匯出影片</span>
+            </button>
+          </div>
         </div>
       </div>
 
