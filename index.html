@@ -350,7 +350,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.8.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.8.1</div>
         </div>
       </div>
       
@@ -1480,9 +1480,11 @@
         }));
       }
 
-      // Lay out: front camera (or first available) as the main view, rest as thumbnails
+      // Lay out: keep the user's previously chosen camera if it exists here, else front (or first).
+      const preferredCam = spotlightCam;
       spotlightCam = null;
-      applySpotlight(cameras.includes('front') ? 'front' : cameras[0]);
+      applySpotlight((preferredCam && cameras.includes(preferredCam)) ? preferredCam
+        : (cameras.includes('front') ? 'front' : cameras[0]));
 
       // Wait for basic readiness before resetting controls / enabling the play button.
       // This + muted greatly reduces "videos don't play" races and policy blocks.
@@ -1496,11 +1498,14 @@
       if (!preserveTelemetry) resetTelemetry();
       else updateTelemetryHUD(0);
 
-      // Reset controls
+      // Reset controls, then immediately reflect the (global) start position — for a continuous
+      // session, clicking the Nth clip should jump the bar/time to that segment's offset right away,
+      // not wait for the user to press play.
       isPlaying = false;
       updatePlayButton();
       document.getElementById('seek-slider').value = 0;
       document.getElementById('time-display').textContent = '00:00 / 00:00';
+      playbackTick(true);
     }
 
     // ===== Seamless segment transitions: preload the next segment off-screen =====
@@ -1581,9 +1586,11 @@
     function mountVideoSet(set, preserveTelemetry) {
       Object.values(videos).forEach(v => { try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {} });
       // applySpotlight (below) does the single authoritative clear+reparent — no redundant pre-clear.
+      const preferredCam = spotlightCam; // keep the user's chosen camera across the cut
       videos = set.vids;
       masterVideo = null; spotlightCam = null;
-      const masterCam = set.cameras.includes('front') ? 'front' : set.cameras[0];
+      const masterCam = (preferredCam && set.cameras.includes(preferredCam)) ? preferredCam
+        : (set.cameras.includes('front') ? 'front' : set.cameras[0]);
       applySpotlight(masterCam);
       masterVideo = (videos[masterCam] || Object.values(videos)[0] || {}).el || null;
       if (masterVideo) attachMasterListeners();
@@ -1591,6 +1598,7 @@
       if (!preserveTelemetry) resetTelemetry(); else updateTelemetryHUD(0);
       isPlaying = false; updatePlayButton();
       document.getElementById('seek-slider').value = 0;
+      playbackTick(true); // reflect the (global) position immediately, even while paused
     }
 
     function schedulePreload() {
@@ -1741,6 +1749,8 @@
       masterVideo.addEventListener('ended', () => { onSegmentEnded(); });
       masterVideo.addEventListener('seeked', () => playbackTick(true));
       masterVideo.addEventListener('play', () => startUiLoop());
+      // When duration becomes known, update the bar/time even while paused (handles clicking a clip).
+      masterVideo.addEventListener('loadedmetadata', () => playbackTick(true));
       // When the rVFC/rAF loop isn't running (paused, or a browser throttling it), let timeupdate keep the bar alive.
       masterVideo.addEventListener('timeupdate', () => { if (uiLoopVid !== masterVideo) playbackTick(false); });
       // Low-frequency safety baseline (covers backgrounded tabs where rVFC/rAF pause, and any
@@ -1826,6 +1836,8 @@
       const elapsed = before + (masterVideo.currentTime || 0);
       const td = document.getElementById('time-display');
       if (td) td.textContent = `${formatTime(elapsed)} / ${formatTime(total)}`;
+      const sl = document.getElementById('seek-slider');
+      if (sl && !isSeeking) sl.value = total > 0 ? Math.min(100, elapsed / total * 100) : 0;
       updateMarkReadout();
     }
     
