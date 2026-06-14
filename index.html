@@ -533,14 +533,13 @@
             <i id="t-blink-left" class="fa-solid fa-caret-left tblink" title="左方向燈"></i>
             <div id="tw-speed" class="tspeed"><span id="t-speed-val">0</span><span class="tunit">km/h</span></div>
             <i id="t-blink-right" class="fa-solid fa-caret-right tblink" title="右方向燈"></i>
-            <svg id="tw-steer" class="tsteer" viewBox="0 0 48 48" width="36" height="36" title="方向盤（yoke）">
-              <g fill="currentColor">
-                <rect x="5" y="13" width="11" height="22" rx="5.5"/>
-                <rect x="32" y="13" width="11" height="22" rx="5.5"/>
-                <rect x="9" y="20.5" width="30" height="7" rx="3.5"/>
+            <svg id="tw-steer" class="tsteer" viewBox="0 0 40 40" width="34" height="34" title="方向盤（yoke）">
+              <g fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+                <path d="M7 15 Q7 11 11 11 L16 11 Q20 14.5 24 11 L29 11 Q33 11 33 15 L33 25 Q33 29 29 29 L11 29 Q7 29 7 25 Z"/>
+                <line x1="7" y1="20" x2="16.5" y2="20"/>
+                <line x1="33" y1="20" x2="23.5" y2="20"/>
               </g>
-              <circle cx="24" cy="24" r="5" fill="#3f4654"/>
-              <circle cx="24" cy="24" r="2" fill="currentColor"/>
+              <circle cx="20" cy="20" r="3.4" fill="currentColor"/>
             </svg>
           </div>
 
@@ -2002,22 +2001,22 @@ message SeiMetadata {
       ctx.drawImage(vid, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
     }
 
-    // Draw a Tesla-yoke-style steering control (two side grips + centre bar + hub), rotated
+    // Draw a yoke-style steering control on the canvas, rotated by angleRad (export burn-in)
     function drawYoke(ctx, cx, cy, half, angleRad, lw, color) {
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate(angleRad || 0);
-      const rr = (x, y, w, h, r) => { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); ctx.fill(); };
-      ctx.fillStyle = color;
-      const gw = half * 0.30, gh = half * 1.18;   // side grips
-      rr(-half, -gh / 2, gw, gh, gw / 2);
-      rr(half - gw, -gh / 2, gw, gh, gw / 2);
-      const barW = half * 1.56, barH = half * 0.36;  // centre bar
-      rr(-barW / 2, -barH / 2, barW, barH, barH / 2);
-      ctx.fillStyle = '#3f4654';                    // hub
-      ctx.beginPath(); ctx.arc(0, 0, half * 0.3, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = color;
-      ctx.beginPath(); ctx.arc(0, 0, half * 0.12, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = lw; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      const w = half, h = half * 0.72, r = half * 0.34;
+      ctx.beginPath();
+      ctx.moveTo(-w + r, -h);
+      ctx.lineTo(w - r, -h); ctx.arcTo(w, -h, w, -h + r, r);
+      ctx.lineTo(w, h - r); ctx.arcTo(w, h, w - r, h, r);
+      ctx.lineTo(-w + r, h); ctx.arcTo(-w, h, -w, h - r, r);
+      ctx.lineTo(-w, -h + r); ctx.arcTo(-w, -h, -w + r, -h, r);
+      ctx.closePath(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-w, 0); ctx.lineTo(-half * 0.28, 0); ctx.moveTo(w, 0); ctx.lineTo(half * 0.28, 0); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, half * 0.22, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
@@ -2074,6 +2073,107 @@ message SeiMetadata {
         ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 * S; ctx.stroke();
       }
       ctx.restore();
+    }
+
+    // Rounded pill on canvas; returns its width
+    function drawPill(ctx, x, cy, text, bg, fg, S) {
+      ctx.font = `700 ${Math.round(13 * S)}px system-ui, sans-serif`;
+      const padX = 9 * S, h = 19 * S, w = ctx.measureText(text).width + 2 * padX;
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x, cy - h / 2, w, h, h / 2); else ctx.rect(x, cy - h / 2, w, h);
+      ctx.fill();
+      ctx.fillStyle = fg; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, x + padX, cy + 0.5 * S);
+      return w;
+    }
+
+    // Telemetry panel for export — mirrors the on-screen HUD's vertical layout
+    function drawTelemetryPanel(ctx, canvas, S, sei, refTb) {
+      const blinkOn = (Math.floor(refTb / 0.35) % 2) === 0;
+      const kmh = Math.max(0, Math.round((sei.vehicleSpeedMps || 0) * 3.6));
+      const gear = GEAR_LABEL[sei.gearState] || 'P';
+      const ap = AP_LABEL[sei.autopilotState] || '';
+      const hasMap = telemShow.map && telemetry.route && telemetry.route.hasGps;
+
+      const rowSpeed = telemShow.speed || telemShow.blinkers || telemShow.steering;
+      const rowMid = telemShow.gear || (telemShow.autopilot && ap) || (telemShow.brake && sei.brakeApplied) || telemShow.accel;
+      const instr = [];
+      if (telemShow.gforce) instr.push('g');
+      if (telemShow.compass) instr.push('c');
+      if (hasMap) instr.push('m');
+      if (!rowSpeed && !rowMid && !instr.length) return;
+
+      const P = 14 * S, gap = 9 * S;
+      const sItems = [];
+      if (rowSpeed) {
+        if (telemShow.blinkers) sItems.push({ t: 'bl', w: 20 * S });
+        if (telemShow.speed) sItems.push({ t: 'sp', w: 56 * S });
+        if (telemShow.blinkers) sItems.push({ t: 'br', w: 20 * S });
+        if (telemShow.steering) sItems.push({ t: 'yk', w: 40 * S });
+      }
+      const speedW = sItems.reduce((a, it) => a + it.w, 0) + gap * Math.max(0, sItems.length - 1);
+      let instrW = 0; instr.forEach((it, i) => { instrW += (it === 'm' ? 96 * S : 50 * S) + (i ? 12 * S : 0); });
+      const innerW = Math.max(speedW, instrW, 160 * S);
+      const hSpeed = rowSpeed ? 54 * S : 0, hMid = rowMid ? 26 * S : 0, hInstr = instr.length ? (hasMap ? 100 * S : 54 * S) : 0;
+      const hs = [hSpeed, hMid, hInstr].filter(v => v > 0);
+      const innerH = hs.reduce((a, b) => a + b, 0) + gap * Math.max(0, hs.length - 1);
+      const W = innerW + 2 * P, H = innerH + 2 * P;
+      const x0 = 24 * S, y0 = canvas.height - H - 20 * S, cx = x0 + W / 2;
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.62)';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x0, y0, W, H, 16 * S); else ctx.rect(x0, y0, W, H);
+      ctx.fill();
+      const rr = (x, y, w, h, r) => { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); ctx.fill(); };
+      let y = y0 + P;
+
+      if (rowSpeed) {
+        const rowY = y + hSpeed / 2;
+        let ix = cx - speedW / 2;
+        ctx.textBaseline = 'middle';
+        sItems.forEach(it => {
+          const c = ix + it.w / 2;
+          if (it.t === 'bl') { ctx.textAlign = 'center'; ctx.font = `700 ${Math.round(22 * S)}px system-ui, sans-serif`; ctx.fillStyle = (sei.blinkerOnLeft && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)'; ctx.fillText('◀', c, rowY); }
+          else if (it.t === 'br') { ctx.textAlign = 'center'; ctx.font = `700 ${Math.round(22 * S)}px system-ui, sans-serif`; ctx.fillStyle = (sei.blinkerOnRight && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)'; ctx.fillText('▶', c, rowY); }
+          else if (it.t === 'sp') { ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = `800 ${Math.round(34 * S)}px system-ui, sans-serif`; ctx.fillText(String(kmh), c, rowY - 8 * S); ctx.font = `500 ${Math.round(12 * S)}px system-ui, sans-serif`; ctx.fillStyle = '#94a3b8'; ctx.fillText('km/h', c, rowY + 16 * S); }
+          else if (it.t === 'yk') { drawYoke(ctx, c, rowY, 17 * S, (sei.steeringWheelAngle || 0) / STEERING_RATIO, 3 * S, '#cbd5e1'); }
+          ix += it.w + gap;
+        });
+        ctx.textBaseline = 'alphabetic';
+        y += hSpeed + gap;
+      }
+
+      if (rowMid) {
+        const rowY = y + hMid / 2;
+        let lx = x0 + P;
+        const anyBadge = telemShow.gear || (telemShow.autopilot && ap) || (telemShow.brake && sei.brakeApplied);
+        if (telemShow.gear) lx += drawPill(ctx, lx, rowY, gear, '#ffffff', '#111', S) + 6 * S;
+        if (telemShow.autopilot && ap) lx += drawPill(ctx, lx, rowY, ap, '#2563eb', '#fff', S) + 6 * S;
+        if (telemShow.brake && sei.brakeApplied) lx += drawPill(ctx, lx, rowY, '煞車', '#dc2626', '#fff', S) + 6 * S;
+        if (telemShow.accel) {
+          const bx = anyBadge ? lx + 4 * S : x0 + P;
+          const bw = (x0 + W - P) - bx, bh = 7 * S, by = rowY - bh / 2;
+          ctx.fillStyle = '#27272a'; rr(bx, by, bw, bh, bh / 2);
+          ctx.fillStyle = '#22c55e'; rr(bx, by, bw * accelFrac(sei), bh, bh / 2);
+        }
+        y += hMid + gap;
+      }
+
+      if (instr.length) {
+        const rowCY = y + hInstr / 2;
+        let ix = cx - instrW / 2;
+        instr.forEach((it, i) => {
+          if (i) ix += 12 * S;
+          if (it === 'g') { drawGBall(ctx, ix + 25 * S, rowCY, 24 * S, sei.linearAccelerationMps2X || 0, sei.linearAccelerationMps2Y || 0, S); ix += 50 * S; }
+          else if (it === 'c') { drawCompass(ctx, ix + 25 * S, rowCY, 24 * S, sei.headingDeg || 0, S); ix += 50 * S; }
+          else if (it === 'm') { drawExportMinimap(ctx, ix, rowCY - 48 * S, 96 * S, telemetry.route, refTb, S); ix += 96 * S; }
+        });
+      }
+
+      ctx.restore();
+      ctx.textAlign = 'center';
     }
 
     async function runExport(opts) {
@@ -2279,66 +2379,11 @@ message SeiMetadata {
           ctx.restore();
         }
 
-        // Telemetry HUD burn-in (bottom-left), scaled, honoring the display toggles
+        // Telemetry burn-in — same vertical panel layout as the on-screen HUD
         if (telemetryEnabled && telemetry) {
           const refTb = ref ? ref.currentTime : 0;
           const sei = findSeiAt(refTb);
-          if (sei) {
-            const kmh = Math.max(0, Math.round((sei.vehicleSpeedMps || 0) * 3.6));
-            const gear = GEAR_LABEL[sei.gearState] || 'P';
-            const ap = AP_LABEL[sei.autopilotState] || '';
-            const blinkOn = (Math.floor(refTb / 0.35) % 2) === 0; // ~1.4 Hz flash
-            const hx = 24 * S, hy = canvas.height - 92 * S, hw = 300 * S, hh = 74 * S;
-            ctx.save();
-            ctx.globalAlpha = 0.95;
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(hx, hy, hw, hh, 14 * S); ctx.fill(); }
-            else ctx.fillRect(hx, hy, hw, hh);
-
-            ctx.textAlign = 'center';
-            if (telemShow.blinkers) {
-              ctx.font = `700 ${Math.round(24 * S)}px system-ui, sans-serif`;
-              ctx.fillStyle = (sei.blinkerOnLeft && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)';
-              ctx.fillText('◀', hx + 22 * S, hy + 42 * S);
-              ctx.fillStyle = (sei.blinkerOnRight && blinkOn) ? '#22c55e' : 'rgba(255,255,255,0.16)';
-              ctx.fillText('▶', hx + 152 * S, hy + 42 * S);
-            }
-            if (telemShow.speed) {
-              ctx.fillStyle = '#fff';
-              ctx.font = `800 ${Math.round(34 * S)}px system-ui, sans-serif`;
-              ctx.fillText(String(kmh), hx + 87 * S, hy + 38 * S);
-              ctx.font = `500 ${Math.round(12 * S)}px system-ui, sans-serif`;
-              ctx.fillStyle = '#94a3b8';
-              ctx.fillText('km/h', hx + 87 * S, hy + 58 * S);
-            }
-            if (telemShow.steering) {
-              drawYoke(ctx, hx + 218 * S, hy + 30 * S, 19 * S, (sei.steeringWheelAngle || 0) / STEERING_RATIO, 3 * S, '#cbd5e1');
-            }
-            ctx.fillStyle = '#fff';
-            if (telemShow.gear) { ctx.font = `700 ${Math.round(17 * S)}px system-ui, sans-serif`; ctx.fillText(gear, hx + 272 * S, hy + 26 * S); }
-            if (telemShow.autopilot && ap) { ctx.fillStyle = '#93c5fd'; ctx.font = `600 ${Math.round(11 * S)}px system-ui, sans-serif`; ctx.fillText(ap, hx + 272 * S, hy + 46 * S); }
-            if (telemShow.brake && sei.brakeApplied) { ctx.fillStyle = '#f87171'; ctx.font = `700 ${Math.round(11 * S)}px system-ui, sans-serif`; ctx.fillText('煞車', hx + 272 * S, hy + 64 * S); }
-
-            // accelerator depth bar under the box
-            if (telemShow.accel) {
-              const bx = hx + 16 * S, by = hy + hh + 8 * S, bw = hw - 32 * S, bh = 7 * S;
-              ctx.fillStyle = '#27272a';
-              if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, bh / 2); ctx.fill(); } else ctx.fillRect(bx, by, bw, bh);
-              ctx.fillStyle = '#22c55e';
-              const fw = bw * accelFrac(sei);
-              if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, fw, bh, bh / 2); ctx.fill(); } else ctx.fillRect(bx, by, fw, bh);
-            }
-            ctx.restore();
-
-            // instruments to the right of the box: G-ball, compass, minimap
-            let ix = hx + hw + 16 * S;
-            const iy = hy + hh / 2;
-            if (telemShow.gforce) { drawGBall(ctx, ix + 28 * S, iy, 26 * S, sei.linearAccelerationMps2X || 0, sei.linearAccelerationMps2Y || 0, S); ix += 64 * S; }
-            if (telemShow.compass) { drawCompass(ctx, ix + 28 * S, iy, 26 * S, sei.headingDeg || 0, S); ix += 64 * S; }
-            if (telemShow.map && telemetry.route && telemetry.route.hasGps) { const ms = 92 * S; drawExportMinimap(ctx, ix, hy + hh - ms, ms, telemetry.route, refTb, S); }
-
-            ctx.textAlign = 'center';
-          }
+          if (sei) drawTelemetryPanel(ctx, canvas, S, sei, refTb);
         }
 
         if (supportsManual && vtrack.requestFrame) vtrack.requestFrame();
