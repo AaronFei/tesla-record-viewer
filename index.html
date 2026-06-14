@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.11.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.12.0</div>
         </div>
       </div>
       
@@ -2292,6 +2292,7 @@ message SeiMetadata {
     let SeiMetadataType = null;
     let telemetry = null;        // { samples: [{ t, sei }], cam, route }
     let telemetryEnabled = false;
+    let telemParseToken = 0;     // bumped to cancel an in-flight progressive parse (e.g. on clip switch)
     const GEAR_LABEL = { 0: 'P', 1: 'D', 2: 'R', 3: 'N' };
     const AP_LABEL = { 0: '', 1: 'FSD', 2: 'AutoSteer', 3: 'TACC' };
     const STEERING_RATIO = 15; // steering-wheel angle -> road-wheel angle (calmer display)
@@ -2644,33 +2645,76 @@ message SeiMetadata {
       }
     }
 
+    // Progressive parse: show telemetry as soon as the CURRENT segment is parsed (so what's playing
+    // lights up immediately), keep parsing the rest in the background, then attach the GPS route + map
+    // last (they need the full set of points + a tile fetch).
     async function parseTelemetry() {
       if (!currentEvent) return;
       setTelemetryBtn('loading');
+      const token = ++telemParseToken;
       try {
+        const ok = await ensureProtobuf();
+        const SeiType = ok ? initTelemetryProto() : null;
         const cams = Object.keys(currentEvent.clips).sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
         const refCam = cams.includes('front') ? 'front' : cams[0];
+        if (!SeiType) { if (token === telemParseToken) { setTelemetryBtn('none'); } return; }
         await new Promise(r => setTimeout(r, 30)); // let the "loading" state paint
+        if (token !== telemParseToken) return;
 
-        // A multi-segment continuous session is parsed as ONE combined timeline so the
-        // GPS path and telemetry are continuous across the whole run, not per-segment.
         const segs = (session && session.length > 1) ? session : [currentEvent];
-        const t = await parseSessionTelemetry(segs, refCam, (i, n) => {
-          const lab = document.getElementById('telemetry-label');
-          if (lab) lab.textContent = n > 1 ? `解析中… ${i + 1}/${n}` : '解析中…';
-        });
-        if (!t) { telemetry = null; telemetryEnabled = false; setTelemetryBtn('none'); updateTelemetryHUD(); return; }
+        // Live telemetry object. segDur starts from the measured timeline and is refined to each
+        // segment's EXACT parsed duration as we go. Samples are stored per-segment with LOCAL times
+        // and globally re-stamped (rebuild) whenever durations change, so the sample timeline and
+        // telemLookupTime always share the SAME segDur → consistent even as durations refine.
+        const measured = sessionDurations();
+        const tel = { samples: [], route: null, accelScale: 100, cam: refCam, mapBg: null, complete: false,
+          segDur: (() => { const a = []; for (let i = 0; i < segs.length; i++) a.push(measured[i] || 60); return a; })() };
+        telemetry = tel;
+        const perSeg = new Array(segs.length).fill(null); // [{ localT, sei }] per segment
+        let accelMax = 0, anySamples = false, done = 0;
+        const rebuild = () => {
+          const off = []; let o = 0;
+          for (let i = 0; i < segs.length; i++) { off[i] = o; o += tel.segDur[i] || 0; }
+          const all = [];
+          for (let i = 0; i < segs.length; i++) { const a = perSeg[i]; if (a) for (const s of a) all.push({ t: off[i] + s.localT, sei: s.sei }); }
+          all.sort((x, y) => x.t - y.t);
+          tel.samples = all;
+        };
 
-        telemetry = t; telemetry.cam = refCam;
-        telemetryEnabled = true;
+        // Parse the current segment first (so what's playing lights up immediately), then the others.
+        const cur = segs.length > 1 ? Math.min(sessionIdx, segs.length - 1) : 0;
+        const order = [cur]; for (let i = 0; i < segs.length; i++) if (i !== cur) order.push(i);
+
+        for (const segI of order) {
+          if (token !== telemParseToken) return; // superseded (clip switched / reset)
+          const r = await parseSegmentSamples(segs[segI], refCam, SeiType, 0); // local times (offset 0)
+          if (token !== telemParseToken) return;
+          tel.segDur[segI] = r.dur; // refine the timeline with the exact parsed duration
+          perSeg[segI] = r.samples.map(s => ({ localT: s.t, sei: s.sei }));
+          if (r.samples.length) { accelMax = Math.max(accelMax, r.accelMax); anySamples = true; }
+          rebuild(); // re-stamp global samples with the refined durations (keeps sorted + consistent)
+          if (anySamples && !telemetryEnabled) { telemetryEnabled = true; applyTelemVisibility(); }
+          updateTelemetryHUD(masterVideo ? masterVideo.currentTime : 0); // HUD data appears / extends now
+          done++;
+          const lab = document.getElementById('telemetry-label');
+          if (lab) lab.textContent = segs.length > 1 ? TR('controls.telemetry.loading.progress', done, segs.length) : TR('controls.telemetry.loading');
+          await new Promise(r => setTimeout(r, 0)); // yield so playback stays smooth
+        }
+
+        if (!anySamples) { telemetry = null; telemetryEnabled = false; setTelemetryBtn('none'); updateTelemetryHUD(); return; }
+        tel.accelScale = accelMax <= 1.5 ? 1 : 100; // single-pass scale (no mid-parse flicker)
+
+        // GPS route + map LAST → build into locals + re-check the token before committing, so a slow
+        // tile fetch from a superseded parse can't stamp a stale map onto the current telemetry.
+        const route = buildRoute(tel.samples);
+        const mapBg = await buildMapBackground(route);
+        if (token !== telemParseToken) return;
+        tel.route = route; tel.mapBg = mapBg; tel.complete = true;
         setTelemetryBtn('on');
-        applyTelemVisibility();
-        updateTelemetryHUD(masterVideo ? masterVideo.currentTime : 0);
+        updateTelemetryHUD(masterVideo ? masterVideo.currentTime : 0); // maps can draw now
       } catch (e) {
         console.error('SEI telemetry parse failed:', e);
-        telemetry = null;
-        setTelemetryBtn('none');
-        updateTelemetryHUD();
+        if (token === telemParseToken) { telemetry = null; telemetryEnabled = false; setTelemetryBtn('none'); updateTelemetryHUD(); }
       }
     }
 
@@ -2694,6 +2738,7 @@ message SeiMetadata {
     }
 
     function resetTelemetry() {
+      telemParseToken++; // cancel any in-flight progressive parse for the previous clip
       telemetry = null;
       telemetryEnabled = false;
       setTelemetryBtn('idle');
@@ -3191,38 +3236,46 @@ message SeiMetadata {
 
     // Parse SEI across ALL session segments into one combined timeline (global time),
     // so the merged export's telemetry — especially the GPS path — is continuous.
+    // Parse one segment's SEI into samples stamped at (offset + local time). Shared by the export
+    // parser and the interactive progressive parser.
+    async function parseSegmentSamples(seg, refCam, SeiType, offset) {
+      const cam = seg.clips[refCam] ? refCam : Object.keys(seg.clips)[0];
+      const out = { samples: [], dur: 60, accelMax: 0 };
+      try {
+        const file = await getClipFile(seg.clips[cam]);
+        if (file) {
+          const mp4 = new DashcamMP4(await file.arrayBuffer());
+          const config = mp4.getConfig();
+          const frames = mp4.parseFrames(SeiType);
+          const durations = config.durations || [];
+          let t = 0;
+          for (let i = 0; i < frames.length; i++) {
+            if (frames[i].sei) { out.samples.push({ t: offset + t, sei: frames[i].sei }); out.accelMax = Math.max(out.accelMax, frames[i].sei.acceleratorPedalPosition || 0); }
+            t += (durations[i] || 27.78) / 1000;
+          }
+          if (t > 0) out.dur = t;
+        }
+      } catch (e) {}
+      return out;
+    }
+
+    // Full (blocking) parse used by EXPORT — returns the complete telemetry object incl. route + map.
     async function parseSessionTelemetry(segments, refCam, onProg) {
       const ok = await ensureProtobuf();
       const SeiType = ok ? initTelemetryProto() : null;
       if (!SeiType) return null;
       const samples = [], segDur = []; let offset = 0, accelMax = 0;
       for (let segI = 0; segI < segments.length; segI++) {
-        const seg = segments[segI];
         if (onProg) { onProg(segI, segments.length); await new Promise(r => setTimeout(r, 0)); }
-        const cam = seg.clips[refCam] ? refCam : Object.keys(seg.clips)[0];
-        let dur = 60;
-        try {
-          const file = await getClipFile(seg.clips[cam]);
-          if (file) {
-            const mp4 = new DashcamMP4(await file.arrayBuffer());
-            const config = mp4.getConfig();
-            const frames = mp4.parseFrames(SeiType);
-            const durations = config.durations || [];
-            let t = 0;
-            for (let i = 0; i < frames.length; i++) {
-              if (frames[i].sei) { samples.push({ t: offset + t, sei: frames[i].sei }); accelMax = Math.max(accelMax, frames[i].sei.acceleratorPedalPosition || 0); }
-              t += (durations[i] || 27.78) / 1000;
-            }
-            if (t > 0) dur = t;
-          }
-        } catch (e) {}
-        segDur.push(dur);
-        offset += dur;
+        const r = await parseSegmentSamples(segments[segI], refCam, SeiType, offset);
+        for (const s of r.samples) samples.push(s);
+        accelMax = Math.max(accelMax, r.accelMax);
+        segDur.push(r.dur); offset += r.dur;
       }
       if (!samples.length) return null;
       const route = buildRoute(samples);
       const mapBg = await buildMapBackground(route); // OSM tiles when online, else null
-      return { samples, route, accelScale: accelMax <= 1.5 ? 1 : 100, segDur, mapBg };
+      return { samples, route, accelScale: accelMax <= 1.5 ? 1 : 100, segDur, mapBg, complete: true };
     }
 
     // Export a whole continuous session merged into one file (one recorder across all segments)
@@ -3256,8 +3309,8 @@ message SeiMetadata {
         // session telemetry already parsed during playback if available, else parse now.
         let mergeTelem = null;
         if (wantTelem) {
-          if (savedTelemetry && savedTelemetry.segDur && savedTelemetry.segDur.length === segs.length) {
-            mergeTelem = savedTelemetry;
+          if (savedTelemetry && savedTelemetry.complete && savedTelemetry.route && savedTelemetry.segDur && savedTelemetry.segDur.length === segs.length) {
+            mergeTelem = savedTelemetry; // only reuse a FULLY-parsed object (not an in-flight progressive one)
           } else {
             mergeTelem = await parseSessionTelemetry(segs, tsBaseCam, (i, n) => setExportProgress(0, TR('export.progress.parsingTelem', i + 1, n)));
           }
