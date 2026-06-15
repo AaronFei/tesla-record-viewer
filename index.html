@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.20.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.20.1</div>
         </div>
       </div>
       
@@ -1814,12 +1814,14 @@
 
     function schedulePreload() {
       if (!session || sessionIdx >= session.length - 1) { resetPreload(); return; }
-      // Preload the next segment off-screen in BOTH views (re-enabled v1.20.0). It was disabled in grid
-      // (v1.14.5) to avoid ~12 concurrent decoders under the old decode-saturation theory — but the real
-      // cause was a decoder LEAK (now fixed), the preload set only BUFFERS data (no eager warm-play since
-      // v1.14.3), and decodingInfo confirms each stream HW-decodes fine. So grid auto-cuts can be seamless
-      // again (the prebuffered data turns the cut from fetch+decode into decode-only). If a per-cut decode
-      // spike ever shows up in the census/spread logs, this is the line to gate back to spotlight-only.
+      // GRID view: do NOT prebuild the next segment. v1.20.0 tried re-enabling it (the leak was fixed and
+      // decodingInfo says each stream HW-decodes fine) — but the v1.20.0 diagnostics proved it REGRESSES:
+      // the 6 prebuffered elements push liveDelta to 12 and the heavy 4K HW4 front then decode-stalls
+      // mid-segment (seg 9 crawled ~0.37x with `decodebound` firing). decodingInfo only measures a SINGLE
+      // stream; 6 live + 6 prebuffered exceeds this iGPU's real concurrent budget. So keep grid at 6 live
+      // decoders; the auto-cut cold-builds, gated by waitCamerasReady (a short, clean wait) — far better
+      // than a mid-segment crawl. (Spotlight keeps preload: its double-buffer cut needs it.)
+      if (viewMode === 'grid') { resetPreload(); return; }
       const nextEv = session[sessionIdx + 1];
       if (preloadedSet && preloadedSet.key === nextEv.key) return;
       resetPreload();
