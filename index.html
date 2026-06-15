@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.19.1</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.20.0</div>
         </div>
       </div>
       
@@ -1814,12 +1814,12 @@
 
     function schedulePreload() {
       if (!session || sessionIdx >= session.length - 1) { resetPreload(); return; }
-      // GRID view: do NOT prebuild the next segment off-screen. Grid already keeps 6 live decoders
-      // busy; a 6-camera preload set on top means ~12 concurrent HW decode sessions, which overflows
-      // the GPU's decode-slot budget on constrained machines (Windows/iGPU) and spills streams to
-      // software decode → stop-and-go stutter. The auto-cut path falls back to a cold build gated by
-      // waitCamerasReady (a short, clean wait), which the user prefers over a stuttery seamless cut.
-      if (viewMode === 'grid') { resetPreload(); return; }
+      // Preload the next segment off-screen in BOTH views (re-enabled v1.20.0). It was disabled in grid
+      // (v1.14.5) to avoid ~12 concurrent decoders under the old decode-saturation theory — but the real
+      // cause was a decoder LEAK (now fixed), the preload set only BUFFERS data (no eager warm-play since
+      // v1.14.3), and decodingInfo confirms each stream HW-decodes fine. So grid auto-cuts can be seamless
+      // again (the prebuffered data turns the cut from fetch+decode into decode-only). If a per-cut decode
+      // spike ever shows up in the census/spread logs, this is the line to gate back to spotlight-only.
       const nextEv = session[sessionIdx + 1];
       if (preloadedSet && preloadedSet.key === nextEv.key) return;
       resetPreload();
