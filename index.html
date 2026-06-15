@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.3</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.4</div>
         </div>
       </div>
       
@@ -979,6 +979,7 @@
     let events = [];
     let currentEvent = null;
     let videos = {}; // { camera: HTMLVideoElement }
+    let navGen = 0;  // bumped on each manual jump; guards async resume against rapid re-clicks
     let isPlaying = false;
     let masterVideo = null;
     let spotlightCam = null; // camera currently shown in the main stage
@@ -1433,6 +1434,7 @@
     // Called when the current segment ends — advance to the next segment if any
     async function onSegmentEnded() {
       if (session && sessionIdx < session.length - 1) {
+        const myGen = ++navGen; // a manual jump during this cut bumps navGen and wins
         // Measure the real missing footage before the next segment (Tesla clips aren't always
         // contiguous — Sentry pauses, dropped/missing clips). Use the just-played real duration.
         const endedDur = (masterVideo && isFinite(masterVideo.duration) && masterVideo.duration > 0) ? masterVideo.duration : (sessionRealDurs[sessionIdx] || 60);
@@ -1455,8 +1457,13 @@
           sessionIdx = nextIdx; currentEvent = nextEvent; // loadVideosForEvent nulls masterVideo synchronously → no mismatched tick
           await loadVideosForEvent(currentEvent, true); // keep the combined session telemetry
         }
+        if (myGen !== navGen) return; // a manual jump superseded this auto-advance
         isPlaying = false;
-        togglePlayAll(); // auto-play the next segment (master first, thumbs deferred)
+        // Start all six cameras together. Data is already preloaded so this is usually instant; the
+        // brief hold (showing frame 0 of every camera) beats the master running ahead of cold thumbs.
+        await waitCamerasReady(videos, 1500);
+        if (myGen !== navGen) return;
+        togglePlayAll(); // auto-play the next segment, all cameras in sync
         if (gap >= 1.5) showFootageGapNote(gap); // tell the user this jump is missing source footage
         dlog('cut', { to: sessionIdx, gap: +gap.toFixed(1) });
         // Cosmetic updates + the heavy next-segment preload are NOT needed for the cut itself —
@@ -1836,6 +1843,54 @@
         // advancing playback (so no play()/pause() race with the upcoming mount+play).
         try { el.currentTime = 0.0001; } catch (e) {}
       });
+    }
+
+    // Wait until EVERY camera in a set is decode-ready (readyState >= 3 / 'canplay'), or until the
+    // timeout. Used so a manual jump / segment cut starts all six cameras together instead of letting
+    // the master run ahead while the thumbnails are still cold (which showed as per-camera freezes +
+    // watchdog kicks). The user prefers a short wait over a desynced, stuttery start.
+    function waitCamerasReady(vidsObj, maxWaitMs) {
+      const els = Object.values(vidsObj || {}).map(v => v && v.el).filter(Boolean);
+      if (!els.length) return Promise.resolve();
+      return new Promise(resolve => {
+        let settled = false, pending = 0;
+        const cleanups = [];
+        const finishAll = () => { if (settled) return; settled = true; cleanups.forEach(fn => { try { fn(); } catch (e) {} }); resolve(); };
+        els.forEach(el => {
+          if (el.readyState >= 3) return; // already playable
+          pending++;
+          const h = () => { el.removeEventListener('canplay', h); el.removeEventListener('canplaythrough', h); if (--pending <= 0) finishAll(); };
+          el.addEventListener('canplay', h);
+          el.addEventListener('canplaythrough', h);
+          cleanups.push(() => { el.removeEventListener('canplay', h); el.removeEventListener('canplaythrough', h); });
+          // Make sure the decoder is actually working at the current position (cold/suspended ones).
+          try { if (el.readyState < 2) el.currentTime = el.currentTime; } catch (e) {}
+        });
+        if (pending <= 0) return finishAll();
+        setTimeout(finishAll, maxWaitMs); // never hang forever (e.g. an undecodable camera)
+      });
+    }
+
+    // Small "buffering…" veil over the player stage, shown while we wait for all cameras to be ready.
+    // Attached to #stage-wrap (a stable, position:relative container) — NOT #player-stage, whose
+    // innerHTML is cleared on every (re)load, which would strand the veil.
+    let _bufEl = null;
+    function setBuffering(on) {
+      const host = document.getElementById('stage-wrap');
+      if (!host) return;
+      if (on) {
+        if (!_bufEl) {
+          _bufEl = document.createElement('div');
+          _bufEl.style.cssText = 'position:absolute;inset:0;z-index:45;display:flex;align-items:center;justify-content:center;gap:10px;background:rgba(9,9,11,0.45);color:#fff;font-size:14px;font-weight:500;pointer-events:none;';
+          _bufEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span class="buf-txt"></span>';
+        }
+        _bufEl.querySelector('.buf-txt').textContent = (currentLang === 'en') ? 'Buffering…' : '緩衝中…';
+        if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+        if (_bufEl.parentElement !== host) host.appendChild(_bufEl);
+        _bufEl.style.display = 'flex';
+      } else if (_bufEl) {
+        _bufEl.style.display = 'none';
+      }
     }
 
     // ===== Diagnostics log (always-on ring buffer) + slow-source (USB) read detection =====
@@ -2279,6 +2334,7 @@
       } else {
         // Optimistically reflect the playing state immediately (the button used to
         // update before the async play() promise set isPlaying, so it stuck on 播放)
+        setBuffering(false); // playback is starting → drop any "buffering…" veil
         isPlaying = true;
         updatePlayButton();
         // Play the MASTER first so the main picture appears with minimal latency, then defer the
@@ -2316,6 +2372,7 @@
     }
     async function jumpToSegment(si, localT) {
       if (!session || si < 0 || si >= session.length) return;
+      const myGen = ++navGen; // guards against rapid re-clicks superseding this jump mid-await
       const wasPlaying = isPlaying;
       sessionIdx = si;
       currentEvent = session[si];
@@ -2323,11 +2380,19 @@
       updateSessionHeader();
       if (currentEvent._cardEl) currentEvent._cardEl.scrollIntoView({ block: 'nearest' });
       resetPreload();
+      if (wasPlaying) setBuffering(true); // jumping mid-play → show we're waiting for all cameras
       await loadVideosForEvent(currentEvent, true);
+      if (myGen !== navGen) return; // a newer jump superseded this one; let it own the stage/veil
       Object.values(videos).forEach(v => { try { if (v.el.duration > 0) v.el.currentTime = Math.min(localT, v.el.duration); } catch (e) {} });
       isPlaying = false;
-      if (wasPlaying) togglePlayAll();
-      else { updatePlayButton(); updateTimestampOverlays(); updateTelemetryHUD(localT); }
+      if (wasPlaying) {
+        // Wait until ALL six cameras are decode-ready, then start them together (no master running
+        // ahead of cold thumbnails, no per-camera watchdog kicks). A short wait beats a stuttery start.
+        await waitCamerasReady(videos, 4000);
+        if (myGen !== navGen) return;
+        setBuffering(false);
+        togglePlayAll();
+      } else { setBuffering(false); updatePlayButton(); updateTimestampOverlays(); updateTelemetryHUD(localT); }
       schedulePreload();
     }
     function seekAll(percent) {
@@ -3858,6 +3923,7 @@ message SeiMetadata {
     }
 
     function closePlayer() {
+      setBuffering(false); // never leave the buffering veil up
       // Stop everything — release decoders, not just pause, so closing the player frees the GPU sessions.
       Object.values(videos).forEach(v => {
         try {
