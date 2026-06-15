@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.15.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.16.0</div>
         </div>
       </div>
       
@@ -2030,6 +2030,7 @@
 
       // Watermark/timestamp only render on the stage; refresh after re-parenting
       updateWatermarkVisibility();
+      if (_reducedCams) applyReducedCameras(); // the essential set (front + spotlight) may have changed
     }
 
     // ===== Grid ("六宮格") view: all cameras equal-size in the export-style surround layout =====
@@ -2069,6 +2070,7 @@
         stage.appendChild(w);
       });
       updateWatermarkVisibility();
+      if (_reducedCams) applyReducedCameras(); // keep shed cameras paused/dimmed after a re-render
     }
 
     // Render the spotlight view (one big + thumbnail strip), clearing any grid layout first.
@@ -2175,11 +2177,13 @@
     //  (2) MASTER RECOVERY is play()-FIRST (does not flush the decoder); a +0.05 seek is a last resort
     //      after 2 failed play() nudges; if even that fails, stop nudging and flag _decodeBound (the
     //      machine genuinely can't sustain the load — future hook for shedding cameras).
-    let _wdState = {};        // holds __master: { ct, since, nudges } — the master-freeze baseline
+    let _wdState = {};        // holds __master: { ct, since, tries, target } — the master-freeze baseline
     let _wdLast = 0;          // throttle marker (perf ms)
     let _playStartedAt = 0;   // when playback last (re)started — for the startup grace
     let _spreadLogLast = 0;   // throttle for the 'spread' diagnostic line
-    let _decodeBound = false; // master won't advance even after play()+seek nudges (load-shed hook)
+    let _wdRecoverSeekAt = 0; // perf time of our last recovery skip (suppresses the 'seeked' grace re-arm)
+    let _kickTimes = [];      // recent recovery-skip timestamps → decode-bound detection
+    let _decodeBound = false; // master can't sustain real-time decode here (drives the reduce-cameras hint)
     const DRIFT_TOL = 0.8;    // seconds a camera may lead/lag the master before we re-align it
     function playbackWatchdog() {
       if (!isPlaying || !masterVideo) { _wdState = {}; return; }
@@ -2188,19 +2192,32 @@
       _wdLast = now;
       // STARTUP GRACE: a freshly (re)started segment needs a few seconds of UNINTERRUPTED decode to
       // stabilize; seeking during warm-up flushes the decoder and prolongs the stall. Re-armed via
-      // _playStartedAt at every play/jump/cut and on the master 'seeked' handler.
+      // _playStartedAt at every play/jump/cut and on the master 'seeked' handler (but NOT our own skips).
       const inStartup = (now - _playStartedAt) < 5000;
       const m = masterVideo;
       const mt = m.currentTime || 0;
       const rate = m.playbackRate || 1;
-
-      // Master-advance baseline FIRST — the single source of truth the drift loop gates on (no 2nd sampler).
-      const mp = _wdState['__master'];
       const masterActive = !(m.paused || m.ended || m.seeking);
+
+      // Master-advance baseline — seek-AWARE: a recovery skip jumps currentTime, which must NOT be read
+      // as "recovered". Only genuine playback PAST our last skip target counts as advancing.
+      const mp = _wdState['__master'];
       let masterAdvancing = false;
-      if (!masterActive) { _wdState['__master'] = null; }
-      else if (!mp || Math.abs(mt - mp.ct) > 0.02) { _wdState['__master'] = { ct: mt, since: now, nudges: 0 }; masterAdvancing = true; _decodeBound = false; }
-      // else: master ct is flat → masterAdvancing stays false, and we KEEP mp.since so its freeze age grows.
+      if (!masterActive) {
+        _wdState['__master'] = null;
+      } else if (!mp) {
+        _wdState['__master'] = { ct: mt, since: now, tries: 0, target: 0 };
+        masterAdvancing = true;
+      } else {
+        const playedPastTarget = mt > (mp.target || 0) + 0.5; // moved beyond our last skip → truly playing
+        const movedForward = mt > mp.ct + 0.25;
+        if (movedForward && (!mp.target || playedPastTarget)) {
+          _wdState['__master'] = { ct: mt, since: now, tries: 0, target: 0 };
+          masterAdvancing = true; _decodeBound = false; _kickTimes = [];
+        } else {
+          mp.ct = Math.max(mp.ct, mt); // furthest seen; keep since/tries/target so freeze-age accrues
+        }
+      }
 
       // (1) ALIGNMENT — only while the master is advancing. Fix the single worst-drifted camera per
       // cycle (either direction → leaders get pulled back too, so no permanent forward desync), but
@@ -2219,21 +2236,113 @@
         if (now - _spreadLogLast > 2000) { _spreadLogLast = now; dlog('spread', { max: +maxSpread.toFixed(2), fix: worst ? 1 : 0, mt: +mt.toFixed(2) }); }
       }
 
-      // (2) MASTER RECOVERY — play()-first, seek only as a last resort, then give up + flag decode-bound.
-      if (!inStartup && masterActive && !masterAdvancing && mp && now - mp.since > 4000
+      // (2) MASTER RECOVERY — when currentTime is FLAT with a full buffer the decoder can't move forward
+      // from here (a heavy/undecodable frame, or 6-stream decode starvation). A bare play() can't skip
+      // it, so SEEK forward by an escalating skip to get past the stuck region. Drift correction is gated
+      // on the master advancing, so these skips don't storm the thumbnails. After several skips in a short
+      // window the segment is genuinely too heavy → flag _decodeBound (offers the reduce-cameras hint).
+      if (!inStartup && masterActive && !masterAdvancing && mp && now - mp.since > 2500
           && m.readyState >= 2 && bufferedAhead(m) > 0.4) {
-        const n = mp.nudges || 0;
-        if (n < 2) {
-          try { const p = m.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {} // no decoder flush
-          dlog('kick', { cam: 'master', via: 'play', n: n, ct: +mt.toFixed(2), ahead: +bufferedAhead(m).toFixed(2), rs: m.readyState });
-          mp.nudges = n + 1; mp.since = now;
-        } else if (n === 2) {
-          try { m.currentTime = mt + 0.05; const p = m.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {} // last-resort re-prime
-          dlog('kick', { cam: 'master', via: 'seek', n: n, ct: +mt.toFixed(2), ahead: +bufferedAhead(m).toFixed(2), rs: m.readyState });
-          mp.nudges = n + 1; mp.since = now;
-        } else if (!_decodeBound) {
-          _decodeBound = true; dlog('decodebound', { ct: +mt.toFixed(2), ahead: +bufferedAhead(m).toFixed(2) });
+        const tries = mp.tries || 0;
+        const skip = Math.min(0.4 * Math.pow(2, tries), 4.0); // 0.4, 0.8, 1.6, 3.2, 4.0…
+        const dur = m.duration || (mt + skip + 1);
+        const target = Math.min(Math.max(mt, mp.target || 0) + skip, dur - 0.1);
+        _wdRecoverSeekAt = now;
+        try { m.currentTime = target; const p = m.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+        dlog('kick', { cam: 'master', skip: +skip.toFixed(2), try: tries, ct: +mt.toFixed(2), ahead: +bufferedAhead(m).toFixed(2), rs: m.readyState });
+        mp.tries = tries + 1; mp.since = now; mp.target = target;
+        _kickTimes.push(now); _kickTimes = _kickTimes.filter(t => now - t < 15000);
+        if (_kickTimes.length >= 3 && !_decodeBound) { _decodeBound = true; dlog('decodebound', { ct: +mt.toFixed(2), kicks: _kickTimes.length }); }
+      }
+
+      if (_decodeBound && !_reducedCams) offerReduceCameras();
+    }
+
+    // ===== Capability fallback: shed decode load by pausing non-essential cameras =================
+    // When a segment is decode-bound (the watchdog keeps having to skip the master forward), we OFFER
+    // — consent-first — to pause everything except the main view + front camera. Pausing (not removing)
+    // frees GPU decode THROUGHPUT for the remaining streams while keeping the elements alive (valid src,
+    // frozen last frame, still in the `videos` map → export / telemetry / cuts are unaffected). Reversible.
+    let _reducedCams = false;
+    function essentialCams() { const s = new Set(['front']); if (spotlightCam) s.add(spotlightCam); return s; }
+    function setCamPaused(v, paused) {
+      if (!v || !v.el) return;
+      const w = v.wrapper;
+      let badge = w && w.querySelector('.cam-paused-badge');
+      if (paused) {
+        try { v.el.pause(); } catch (e) {}
+        if (w) {
+          w.style.opacity = '0.45';
+          if (!badge) {
+            badge = document.createElement('div');
+            badge.className = 'cam-paused-badge';
+            badge.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;pointer-events:none;z-index:6;text-shadow:0 1px 4px rgba(0,0,0,.9);';
+            badge.innerHTML = '<i class="fa-solid fa-pause"></i>';
+            (w.querySelector('.video-container') || w).appendChild(badge);
+          }
+          badge.style.display = 'flex';
         }
+      } else {
+        if (w) { w.style.opacity = ''; if (badge) badge.style.display = 'none'; }
+        if (isPlaying) { try { const p = v.el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
+      }
+    }
+    // (Re)apply the reduced-camera state to the current set — also called after every mount so the
+    // choice persists across segment cuts / jumps.
+    function applyReducedCameras() {
+      if (!videos) return;
+      const keep = essentialCams();
+      Object.entries(videos).forEach(([cam, v]) => setCamPaused(v, _reducedCams && !keep.has(cam)));
+    }
+    function setReducedCameras(on) {
+      _reducedCams = on;
+      applyReducedCameras();
+      if (!on) { _decodeBound = false; _kickTimes = []; syncToMaster(); } // resume → realign the lot
+      updateReduceUI();
+      dlog('reducecams', { on: on ? 1 : 0, keep: Array.from(essentialCams()) });
+    }
+    // The consent toast (offer) + the persistent "restore" pill share one element.
+    function offerReduceCameras() {
+      const now = performance.now();
+      if (_reduceHintLast && now - _reduceHintLast < 30000) return; // don't nag
+      _reduceHintLast = now;
+      updateReduceUI('offer');
+    }
+    let _reduceHintLast = 0;
+    function updateReduceUI(mode) {
+      let el = document.getElementById('reduce-cams-hint');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'reduce-cams-hint';
+        el.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;max-width:600px;background:rgba(180,83,9,0.97);color:#fff;padding:11px 15px;border-radius:14px;font-size:13px;line-height:1.5;box-shadow:0 10px 30px rgba(0,0,0,0.5);display:flex;gap:12px;align-items:center;transition:opacity .25s;';
+        el.innerHTML = '<i class="fa-solid fa-bolt" style="margin-top:1px"></i>'
+          + '<span class="rch-body" style="flex:1"></span>'
+          + '<button class="rch-act" style="font-weight:700;white-space:nowrap;text-decoration:underline;"></button>'
+          + '<button class="rch-x" style="font-weight:600;white-space:nowrap;opacity:.85;"></button>';
+        document.body.appendChild(el);
+      }
+      const zh = currentLang !== 'en';
+      const body = el.querySelector('.rch-body'), act = el.querySelector('.rch-act'), x = el.querySelector('.rch-x');
+      if (_reducedCams) {
+        // persistent restore pill
+        el.style.background = 'rgba(39,39,42,0.97)';
+        body.textContent = zh ? '已暫停部分鏡頭以維持流暢（保留主畫面＋前鏡頭）' : 'Paused some cameras to keep playback smooth (kept main + front)';
+        act.textContent = zh ? '還原全部鏡頭' : 'Restore all';
+        act.onclick = () => setReducedCameras(false);
+        x.textContent = zh ? '隱藏' : 'Hide';
+        x.onclick = () => { el.style.display = 'none'; };
+        el.style.display = 'flex'; el.style.opacity = '1';
+      } else if (mode === 'offer') {
+        el.style.background = 'rgba(180,83,9,0.97)';
+        body.textContent = zh ? '偵測到此片段解碼吃力（畫面較複雜，6 路同時解碼超出負荷）。要只播主畫面＋前鏡頭以維持流暢嗎？'
+                              : 'This segment is decode-heavy (6 streams exceed this device). Play only the main view + front to keep it smooth?';
+        act.textContent = zh ? '減少鏡頭' : 'Reduce cameras';
+        act.onclick = () => setReducedCameras(true);
+        x.textContent = zh ? '不用' : 'No thanks';
+        x.onclick = () => { el.style.display = 'none'; _reduceHintLast = performance.now() + 120000; }; // snooze ~2min
+        el.style.display = 'flex'; el.style.opacity = '1';
+      } else {
+        el.style.display = 'none';
       }
     }
 
@@ -2255,9 +2364,14 @@
       }
 
       masterVideo.addEventListener('ended', () => { onSegmentEnded(); });
-      // Re-arm the watchdog startup grace on any master seek (manual jump within a segment, or the
-      // last-resort kick-seek) so we don't immediately seek-storm the freshly-repositioned decoder.
-      masterVideo.addEventListener('seeked', () => { resetStallState(); _playStartedAt = performance.now(); playbackTick(true); });
+      // Re-arm the watchdog startup grace on a USER seek (manual jump within a segment) so we don't
+      // immediately seek-storm the freshly-repositioned decoder — but NOT for the watchdog's own
+      // recovery skips (those must be allowed to escalate quickly past a wedge).
+      masterVideo.addEventListener('seeked', () => {
+        resetStallState();
+        if (performance.now() - _wdRecoverSeekAt > 600) _playStartedAt = performance.now();
+        playbackTick(true);
+      });
       masterVideo.addEventListener('play', () => startUiLoop());
       // Slow-source (USB) stall detection: 'waiting' = buffer starved; 'playing'/'canplay' = recovered.
       resetStallState();
@@ -2401,8 +2515,13 @@
         if (masterVideo && masterVideo.duration > 0) masterVideo.play().catch(() => {});
         requestAnimationFrame(() => {
           if (!isPlaying) return;
-          const others = Object.values(videos).filter(v => v.el !== masterVideo && v.el.duration > 0);
-          Promise.all(others.map(v => v.el.play().catch(() => {}))).then(() => syncToMaster());
+          // In reduced-camera mode, DON'T even start the shed cameras (keep main + front only) — that's
+          // the whole point: fewer concurrent decoders. applyReducedCameras() then pins their paused state.
+          const keep = essentialCams();
+          const others = Object.entries(videos)
+            .filter(([cam, v]) => v.el !== masterVideo && v.el.duration > 0 && (!_reducedCams || keep.has(cam)))
+            .map(([cam, v]) => v);
+          Promise.all(others.map(v => v.el.play().catch(() => {}))).then(() => { syncToMaster(); if (_reducedCams) applyReducedCameras(); });
         });
       }
     }
@@ -3986,6 +4105,9 @@ message SeiMetadata {
 
     function closePlayer() {
       setBuffering(false); // never leave the buffering veil up
+      // Reset the capability-fallback state + hide its toast.
+      _reducedCams = false; _decodeBound = false; _kickTimes = [];
+      const rh = document.getElementById('reduce-cams-hint'); if (rh) rh.style.display = 'none';
       // Stop everything — release decoders, not just pause, so closing the player frees the GPU sessions.
       Object.values(videos).forEach(v => {
         try {
