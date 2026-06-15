@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.1</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.2</div>
         </div>
       </div>
       
@@ -1476,8 +1476,10 @@
     async function loadVideosForEvent(eventData, preserveTelemetry = false) {
       // Drop any pre-mounted double-buffer back layer before we clear the stage (avoid stranding it).
       discardStagedBack();
-      // Revoke previous object URLs to avoid leaks on rapid event switching
+      // Release the previous clip's decoders + URLs IMMEDIATELY so switching clips doesn't pile up
+      // hardware decode sessions (the cause of cameras freezing on Windows).
       Object.values(videos).forEach(v => {
+        releaseVideo(v.el);
         try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {}
       });
 
@@ -1677,10 +1679,18 @@
       return { key: eventData.key, vids, cameras: present };
     }
 
+    // Free a <video>'s hardware decoder IMMEDIATELY (not whenever GC runs). On Windows especially, the
+    // GPU has a limited number of concurrent HW decode sessions; if discarded clips don't release them,
+    // they pile up (6 grid cams + 6 preloaded + temp probes) and new streams freeze. removeAttribute+load
+    // resets the element and releases the decode session right away.
+    function releaseVideo(el) {
+      try { el.pause(); } catch (e) {}
+      try { el.removeAttribute('src'); el.load(); } catch (e) {}
+    }
     function discardSet(set) {
       if (!set) return;
       Object.values(set.vids).forEach(v => {
-        try { v.el.pause(); } catch (e) {}
+        releaseVideo(v.el);
         try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {}
         try { v.wrapper.remove(); } catch (e) {}
       });
@@ -1740,7 +1750,7 @@
       requestAnimationFrame(() => {
         try { if (oldSpotWrapper) oldSpotWrapper.remove(); } catch (e) {}
         Object.values(oldVideos).forEach(v => {
-          try { v.el.pause(); } catch (e) {}
+          releaseVideo(v.el); // free the decode session, not just pause
           try { if (v.wrapper) v.wrapper.remove(); } catch (e) {}
           try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {}
         });
@@ -2090,6 +2100,35 @@
       }
     }
 
+    // --- Stuck-decoder watchdog -------------------------------------------------------------
+    // Even after we release old clips' decoders, a LIVE <video> can still wedge on Windows: its
+    // hardware decoder stops emitting frames mid-clip while the buffer stays full — we see
+    // currentTime frozen with seconds buffered ahead (NOT starvation; reads are fast). A tiny
+    // re-seek forces the decoder to flush + re-init at that point, which unsticks it. We watch
+    // EVERY active camera because in grid view individual cells freeze independently of the master.
+    let _wdState = {};   // cam -> { ct, since } : last position + when we first saw it stuck there
+    let _wdLast = 0;     // throttle marker (perf ms)
+    function playbackWatchdog() {
+      if (!isPlaying) { _wdState = {}; return; }
+      const now = performance.now();
+      if (now - _wdLast < 850) return; // run ~1Hz regardless of the 250ms interval
+      _wdLast = now;
+      Object.entries(videos).forEach(([cam, v]) => {
+        const el = v && v.el;
+        if (!el || el.paused || el.ended || el.seeking) { _wdState[cam] = null; return; }
+        const ct = el.currentTime || 0;
+        const prev = _wdState[cam];
+        if (!prev || Math.abs(ct - prev.ct) > 0.02) { _wdState[cam] = { ct, since: now }; return; }
+        // Not advancing since prev.since. If it still has buffer + decoded frames, it's a wedged
+        // decoder (not starvation) → kick it once it's been frozen for >1.6s (past normal cut hiccups).
+        if (now - prev.since > 1600 && el.readyState >= 2 && bufferedAhead(el) > 0.4) {
+          try { el.currentTime = ct + 0.05; const p = el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+          dlog('kick', { cam, ct: +ct.toFixed(2), ahead: +bufferedAhead(el).toFixed(2), rs: el.readyState });
+          _wdState[cam] = { ct: ct + 0.05, since: now };
+        }
+      });
+    }
+
     function attachMasterListeners() {
       if (!masterVideo) return;
       if (timeUpdateInterval) clearInterval(timeUpdateInterval);
@@ -2123,6 +2162,7 @@
       // stall): the rVFC loop layers smooth ~per-frame updates on top. Heavy work stays throttled.
       timeUpdateInterval = setInterval(() => {
         if (isPlaying && masterVideo) playbackTick(false);
+        playbackWatchdog();
       }, 250);
 
       startUiLoop();
@@ -2173,6 +2213,7 @@
               holder.appendChild(v);
               await new Promise(res => { v.onloadedmetadata = () => res(); v.onerror = () => res(); setTimeout(res, 4000); });
               if (isFinite(v.duration) && v.duration > 0) d = v.duration;
+              releaseVideo(v); // free the temp element's media resource before dropping it
               try { holder.removeChild(v); } catch (e) {}
               URL.revokeObjectURL(url);
             }
@@ -3464,6 +3505,7 @@ message SeiMetadata {
                 const v = document.createElement('video'); v.preload = 'metadata'; v.src = u;
                 await new Promise(r => { v.onloadedmetadata = () => r(); v.onerror = () => r(); setTimeout(r, 4000); });
                 if (isFinite(v.duration) && v.duration > 0) d = v.duration;
+                releaseVideo(v);
                 URL.revokeObjectURL(u);
               }
             } catch (e) {}
@@ -3587,7 +3629,7 @@ message SeiMetadata {
           });
 
           exportVideoEls = [];
-          Object.values(exportVideos).forEach(v => { try { holder.removeChild(v); } catch (e) {} });
+          Object.values(exportVideos).forEach(v => { releaseVideo(v); try { holder.removeChild(v); } catch (e) {} });
           urls.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
         }
 
@@ -3606,6 +3648,7 @@ message SeiMetadata {
         exportPaused = false; exportVideoEls = []; exportSegControl = null;
         document.getElementById('export-progress').classList.add('hidden');
         setLeftPaneLocked(false);
+        try { holder.querySelectorAll('video').forEach(v => releaseVideo(v)); } catch (e) {} // free export decoders
         try { document.body.removeChild(holder); } catch (e) {}
         if (isPlaying) Object.values(videos).forEach(v => v.el.play().catch(() => {}));
       }
@@ -3811,15 +3854,16 @@ message SeiMetadata {
       await donePromise;
       } finally {
         if (safety) clearTimeout(safety);
+        try { holder.querySelectorAll('video').forEach(v => releaseVideo(v)); } catch (e) {} // free export decoders
         try { document.body.removeChild(holder); } catch (e) {}
       }
     }
-    
+
     function closePlayer() {
-      // Stop everything
+      // Stop everything — release decoders, not just pause, so closing the player frees the GPU sessions.
       Object.values(videos).forEach(v => {
         try {
-          v.el.pause();
+          releaseVideo(v.el);
           if (v.url) URL.revokeObjectURL(v.url);
         } catch(e) {}
       });
