@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.18.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.19.0</div>
         </div>
       </div>
       
@@ -980,6 +980,7 @@
     let currentEvent = null;
     let videos = {}; // { camera: HTMLVideoElement }
     let navGen = 0;  // bumped on each manual jump; guards async resume against rapid re-clicks
+    let loadGen = 0; // bumped on each loadVideosForEvent entry; supersedes an in-flight load so it can't leak decoders
     let isPlaying = false;
     let masterVideo = null;
     let spotlightCam = null; // camera currently shown in the main stage
@@ -1425,9 +1426,10 @@
       clearMarks();
       resetPreload();
       await loadVideosForEvent(currentEvent);
+      sweepLeakedDecoders();
       schedulePreload();
       measureSessionDurations(); // background: get real per-segment durations for an accurate timeline
-      dlog('select', { segs: session ? session.length : 1, idx: sessionIdx, cams: Object.keys(currentEvent.clips || {}).length });
+      dlog('select', { segs: session ? session.length : 1, idx: sessionIdx, cams: Object.keys(currentEvent.clips || {}).length, census: videoCensus() });
       setTimeout(() => checkReadSpeed(currentEvent), 1500); // background: proactively probe source read speed
     }
 
@@ -1461,6 +1463,7 @@
           setBuffering(true);
           sessionIdx = nextIdx; currentEvent = nextEvent; // loadVideosForEvent nulls masterVideo synchronously → no mismatched tick
           await loadVideosForEvent(currentEvent, true); // keep the combined session telemetry
+          sweepLeakedDecoders();
         }
         if (myGen !== navGen) return; // a manual jump superseded this auto-advance
         isPlaying = false;
@@ -1471,7 +1474,7 @@
         setBuffering(false);
         togglePlayAll(); // auto-play the next segment, all cameras in sync
         if (gap >= 1.5) showFootageGapNote(gap); // tell the user this jump is missing source footage
-        dlog('cut', { to: sessionIdx, gap: +gap.toFixed(1) });
+        dlog('cut', { to: sessionIdx, gap: +gap.toFixed(1), census: videoCensus() });
         // Cosmetic updates + the heavy next-segment preload are NOT needed for the cut itself —
         // run them after the new segment is playing so they don't jank the first post-cut frames.
         requestAnimationFrame(() => {
@@ -1487,6 +1490,22 @@
     }
     
     async function loadVideosForEvent(eventData, preserveTelemetry = false) {
+      // In-flight guard: this function is async (it awaits getFile() + readiness) and writes the shared
+      // global `videos`. If the user clicks another segment while a previous load is mid-await, the old
+      // call must STOP — otherwise it keeps doing `videoEl.src = url` (acquiring HW decoders) into a map
+      // nobody will ever release → the leak that makes playback degrade as you click around. We track
+      // every element this call gives a src and release them if a newer load supersedes us.
+      const myLoadGen = ++loadGen;
+      const created = [];
+      const superseded = () => {
+        if (myLoadGen === loadGen) return false;
+        created.forEach(c => {
+          releaseVideo(c.el);
+          try { if (c.url) URL.revokeObjectURL(c.url); } catch (e) {}
+          try { if (c.wrapper) c.wrapper.remove(); } catch (e) {}
+        });
+        return true;
+      };
       // Drop any pre-mounted double-buffer back layer before we clear the stage (avoid stranding it).
       discardStagedBack();
       // Release the previous clip's decoders + URLs IMMEDIATELY so switching clips doesn't pile up
@@ -1508,8 +1527,9 @@
       const readyPromises = [];
       
       for (const cam of cameras) {
+        if (superseded()) return; // a newer load started → release what we made and bail (don't acquire more decoders)
         const entry = eventData.clips[cam];
-        
+
         let file;
         if (entry.file) {
           // fallback mode
@@ -1537,6 +1557,8 @@
         
         const videoEl = wrapper.querySelector('video');
         videoEl.src = url;
+        _decCreated++;
+        created.push({ el: videoEl, url, wrapper }); // track for release if superseded
         videoEl.dataset.camera = cam;
         // Always mute for main playback to avoid autoplay policy blocks on multi-cam sync
         videoEl.muted = true;
@@ -1592,6 +1614,7 @@
         }));
       }
 
+      if (superseded()) return; // before we paint the stage — a superseded call must not draw over the live set
       // Lay out per the active view mode. Spotlight: keep the user's chosen camera if present, else front.
       const preferredCam = spotlightCam;
       const want = (preferredCam && cameras.includes(preferredCam)) ? preferredCam
@@ -1603,7 +1626,8 @@
       // Wait for basic readiness before resetting controls / enabling the play button.
       // This + muted greatly reduces "videos don't play" races and policy blocks.
       await Promise.all(readyPromises);
-      
+      if (superseded()) return; // a newer load won during readiness wait
+
       // Set initial watermark text
       updateWatermarkVisibility();
 
@@ -1663,7 +1687,7 @@
             <div class="watermark-overlay hidden" style="font-size: clamp(11px, 1.8vw, 15px);"></div>
           </div>`;
         const videoEl = wrapper.querySelector('video');
-        videoEl.src = url; videoEl.dataset.camera = cam; videoEl.muted = true;
+        videoEl.src = url; _decCreated++; videoEl.dataset.camera = cam; videoEl.muted = true;
         // NOTE: we deliberately do NOT warm-play the preload set here. preload="auto" buffers the
         // DATA off-screen (fast), but spinning up all 6 preload decoders the moment they load means
         // 6 live (grid) + 6 preload = 12 concurrent HW decode sessions DURING normal playback — which
@@ -1693,8 +1717,28 @@
     // they pile up (6 grid cams + 6 preloaded + temp probes) and new streams freeze. removeAttribute+load
     // resets the element and releases the decode session right away.
     function releaseVideo(el) {
+      try { if (el && (el.currentSrc || el.getAttribute('src'))) _decReleased++; } catch (e) {} // count only real frees
       try { el.pause(); } catch (e) {}
       try { el.removeAttribute('src'); el.load(); } catch (e) {}
+    }
+    // Safety net: release any <video> holding a blob src that is NOT a legitimately-live element — catches
+    // stale preload sets and dropped staged back-layers. The live master is always in `videos`, so it is
+    // never touched (no black flash). Detached orphans are prevented at the source by loadVideosForEvent's
+    // in-flight guard, so the sweep only needs to handle still-attached strays.
+    function sweepLeakedDecoders() {
+      if (isExporting) return; // export builds its own off-DOM-holder clones with src — never sweep those
+      try {
+        const keep = new Set();
+        Object.values(videos || {}).forEach(v => { if (v && v.el) keep.add(v.el); });
+        if (preloadedSet) Object.values(preloadedSet.vids).forEach(v => { if (v && v.el) keep.add(v.el); });
+        document.querySelectorAll('video').forEach(v => {
+          if (keep.has(v)) return;
+          if (preloadHolder && preloadHolder.contains(v)) return; // in-flight preload/probe — leave it
+          if (!(v.currentSrc || v.getAttribute('src'))) return;  // already released
+          releaseVideo(v);
+          dlog('sweep-release', { cam: v.dataset ? v.dataset.camera : null });
+        });
+      } catch (e) {}
     }
     function discardSet(set) {
       if (!set) return;
@@ -1763,6 +1807,7 @@
           try { if (v.wrapper) v.wrapper.remove(); } catch (e) {}
           try { if (v.url) URL.revokeObjectURL(v.url); } catch (e) {}
         });
+        sweepLeakedDecoders(); // backstop: free any stale preload / dropped staged-back decoders
       });
     }
 
@@ -1910,6 +1955,25 @@
     function dlog(cat, obj) {
       try { if (!DBG_T0) DBG_T0 = performance.now(); DBG.push(Object.assign({ t: Math.round(performance.now() - DBG_T0), cat }, obj || {})); if (DBG.length > DBG_MAX) DBG.shift(); } catch (e) {}
     }
+    // Decoder leak census: `liveDelta` (created − released) is the leak-proof metric — it counts every
+    // src assignment + every real release regardless of DOM attachment. It must return to ~camera-count
+    // after a select/jump/cut settles; a monotone climb that never recedes = leaking decoders.
+    let _decCreated = 0, _decReleased = 0;
+    function videoCensus() {
+      try {
+        const all = document.querySelectorAll('video');
+        let withSrc = 0;
+        all.forEach(v => { if (v.currentSrc || v.getAttribute('src')) withSrc++; });
+        return {
+          vids: all.length, decoders: withSrc,
+          created: _decCreated, released: _decReleased, liveDelta: _decCreated - _decReleased,
+          live: Object.keys(videos || {}).length,
+          preload: preloadedSet ? Object.keys(preloadedSet.vids).length : 0,
+          staged: stagedBackWrapper ? 1 : 0,
+          holder: preloadHolder ? preloadHolder.querySelectorAll('video').length : 0,
+        };
+      } catch (e) { return {}; }
+    }
     function bufferedAhead(v) { // seconds buffered beyond the current play head (0 = starved)
       try { for (let i = 0; i < v.buffered.length; i++) { const s = v.buffered.start(i), e = v.buffered.end(i); if (v.currentTime >= s - 0.25 && v.currentTime <= e + 0.25) return e - v.currentTime; } } catch (e) {}
       return 0;
@@ -1922,6 +1986,7 @@
         lang: currentLang, viewMode, folderMode: fb ? 'file-picker (fallback)' : 'File System Access',
         sessionLen: session ? session.length : (currentEvent ? 1 : 0), sessionIdx, telemetry: !!telemetry,
         totalStalls, screen: screen.width + 'x' + screen.height + ' @' + (window.devicePixelRatio || 1) + 'x',
+        census: videoCensus(),
       };
       const out = ['=== Tesla Record Viewer diagnostics ===', JSON.stringify(info, null, 2), '', '=== event log (t = ms since first event) ==='].concat(DBG.map(e => JSON.stringify(e)));
       const blob = new Blob([out.join('\n')], { type: 'text/plain' });
@@ -2387,7 +2452,7 @@
             if (file) {
               const url = URL.createObjectURL(file);
               const v = document.createElement('video');
-              v.preload = 'metadata'; v.muted = true; v.src = url;
+              v.preload = 'metadata'; v.muted = true; v.src = url; _decCreated++;
               holder.appendChild(v);
               await new Promise(res => { v.onloadedmetadata = () => res(); v.onerror = () => res(); setTimeout(res, 4000); });
               if (isFinite(v.duration) && v.duration > 0) d = v.duration;
@@ -2509,6 +2574,8 @@
       if (wasPlaying) setBuffering(true); // jumping mid-play → show we're waiting for all cameras
       await loadVideosForEvent(currentEvent, true);
       if (myGen !== navGen) return; // a newer jump superseded this one; let it own the stage/veil
+      sweepLeakedDecoders();
+      dlog('jump', { to: si, census: videoCensus() });
       Object.values(videos).forEach(v => { try { if (v.el.duration > 0) v.el.currentTime = Math.min(localT, v.el.duration); } catch (e) {} });
       isPlaying = false;
       if (wasPlaying) {
@@ -3697,7 +3764,7 @@ message SeiMetadata {
               const file = await getClipFile(seg.clips[cam]);
               if (file) {
                 const u = URL.createObjectURL(file);
-                const v = document.createElement('video'); v.preload = 'metadata'; v.src = u;
+                const v = document.createElement('video'); v.preload = 'metadata'; v.src = u; _decCreated++;
                 await new Promise(r => { v.onloadedmetadata = () => r(); v.onerror = () => r(); setTimeout(r, 4000); });
                 if (isFinite(v.duration) && v.duration > 0) d = v.duration;
                 releaseVideo(v);
@@ -3724,7 +3791,7 @@ message SeiMetadata {
             if (!file) continue;
             const url = URL.createObjectURL(file); urls.push(url);
             const clone = document.createElement('video');
-            clone.src = url; clone.muted = true; clone.playsInline = true; clone.preload = 'auto';
+            clone.src = url; _decCreated++; clone.muted = true; clone.playsInline = true; clone.preload = 'auto';
             holder.appendChild(clone);
             exportVideos[cam] = clone;
           }
@@ -3921,7 +3988,7 @@ message SeiMetadata {
       const exportVideos = {};
       for (const cam of camList) {
         const clone = document.createElement('video');
-        clone.src = videos[cam].el.src;
+        clone.src = videos[cam].el.src; _decCreated++;
         clone.muted = true;
         clone.playsInline = true;
         clone.preload = 'auto';
@@ -4173,6 +4240,9 @@ message SeiMetadata {
       setupKeyboard();
       applyLang(); // apply the persisted language to all data-i18n elements + dynamic labels
       dlog('start', { ua: navigator.userAgent, platform: navigator.platform, cores: navigator.hardwareConcurrency, mem: navigator.deviceMemory });
+      // Decoder-leak backstop + census: sweep stale decoders and log the leak-proof count periodically.
+      setInterval(() => { if (currentEvent) sweepLeakedDecoders(); }, 4000);
+      setInterval(() => { if (currentEvent) dlog('census', videoCensus()); }, 10000);
 
       // Continuous-playback toggle
       const ct = document.getElementById('continuous-toggle');
