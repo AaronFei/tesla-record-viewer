@@ -2281,17 +2281,18 @@
     }
 
     // --- Playback watchdog: keep the 6 cameras aligned + unstick a wedged master ----------------
-    // Runs ~1Hz. Reworked after a multi-agent review of a decode-bound failure (seg 12 crawled at
-    // 0.22x with visible "replaying"). Root cause: on a weak GPU the master itself starves (rs:1, full
-    // buffer, currentTime flat ~5s) and the OLD watchdog made it catastrophic — its +0.05 master seek
-    // flushed the decoder to a keyframe every ~6s (kick→rs:1), and its two-sided drift correction
-    // hard-seeked thumbnails that had run AHEAD of the frozen master BACKWARD onto it (the rewind the
-    // user saw). The rules below remove that self-inflicted seek storm:
-    //  (1) ALIGNMENT only while the master is actually ADVANCING. Never chase / rewind a frozen master.
-    //      Correct just the single worst-drifted camera per cycle (either direction), rate-normalized.
-    //  (2) MASTER RECOVERY is play()-FIRST (does not flush the decoder); a +0.05 seek is a last resort
-    //      after 2 failed play() nudges; if even that fails, stop nudging and flag _decodeBound (the
-    //      machine genuinely can't sustain the load — future hook for shedding cameras).
+    // Runs ~1Hz. The actual dominant cause of the historical stutter turned out to be a DECODER LEAK
+    // (fixed separately in loadVideosForEvent's in-flight guard) — not decode saturation. What remains
+    // here are the two genuinely-needed jobs (and they are confirmed working: spread converges 4→0.04
+    // after a cold-start hiccup):
+    //  (1) ALIGNMENT — keep all followers on the master whenever it's MOVING (tiered controller below:
+    //      ≤SYNC_TOL restore rate · ≥HARD_TOL one settled forward/back seek · else per-follower rate
+    //      nudge). Never chase / rewind a frozen master (that was the old "replaying" bug).
+    //  (2) MASTER RECOVERY — if the master's currentTime goes FLAT with a full buffer (cold-start of the
+    //      heavy 4K HW4 front under load), an escalating forward seek-skip gets it past the stall.
+    // NOTE: _decodeBound / _kickTimes below are now PASSIVE DIAGNOSTICS ONLY (the camera-shedding hint
+    // they once fed was removed in v1.18.0); they just emit a 'decodebound' dlog when the master keeps
+    // needing skips. Kept because the seek-skip recovery still earns its keep on cold-start hiccups.
     let _wdState = {};        // holds __master: { ct, since, tries, target } — the master-freeze baseline
     let _wdLast = 0;          // throttle marker (perf ms)
     let _playStartedAt = 0;   // when playback last (re)started — for the startup grace
@@ -2394,7 +2395,8 @@
       // from here (a heavy/undecodable frame, or 6-stream decode starvation). A bare play() can't skip
       // it, so SEEK forward by an escalating skip to get past the stuck region. Drift correction is gated
       // on the master advancing, so these skips don't storm the thumbnails. After several skips in a short
-      // window the segment is genuinely too heavy → flag _decodeBound (offers the reduce-cameras hint).
+      // window we just log 'decodebound' as a passive diagnostic (no action — the camera-shedding it once
+      // drove was removed in v1.18.0).
       if (!inStartup && masterActive && !masterAdvancing && mp && now - mp.since > 2500
           && m.readyState >= 2 && bufferedAhead(m) > 0.4) {
         const tries = mp.tries || 0;
