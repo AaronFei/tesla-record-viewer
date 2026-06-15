@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.4</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.5</div>
         </div>
       </div>
       
@@ -1448,21 +1448,27 @@
         // (ended) master still sits at currentTime ≈ its duration; if sessionIdx already pointed at
         // the next segment, the 250ms timeline poll would paint offset(next)+~60 → a forward flash,
         // then snap back when the new master mounts at 0. Advance ATOMICALLY with the master swap.
+        let coldCut = false;
         if (preloadedSet && preloadedSet.key === nextEvent.key) {
           const set = preloadedSet; preloadedSet = null;
           await ensureSetReady(set, 600); // hold last frame (old idx+master stay consistent) until ready
           sessionIdx = nextIdx; currentEvent = nextEvent;
           mountVideoSet(set, true); // instant, no black gap
         } else {
+          // No preloaded set (grid view doesn't prebuild). Cold-build the next segment; this takes a
+          // moment, so show the buffering veil while we wait for all six cameras.
+          coldCut = true;
+          setBuffering(true);
           sessionIdx = nextIdx; currentEvent = nextEvent; // loadVideosForEvent nulls masterVideo synchronously → no mismatched tick
           await loadVideosForEvent(currentEvent, true); // keep the combined session telemetry
         }
         if (myGen !== navGen) return; // a manual jump superseded this auto-advance
         isPlaying = false;
-        // Start all six cameras together. Data is already preloaded so this is usually instant; the
-        // brief hold (showing frame 0 of every camera) beats the master running ahead of cold thumbs.
-        await waitCamerasReady(videos, 1500);
+        // Start all six cameras together. With a preloaded set this is usually instant; on a cold cut
+        // it waits for the cold-built decoders. Either way: no master running ahead of cold thumbs.
+        await waitCamerasReady(videos, coldCut ? 4000 : 1500);
         if (myGen !== navGen) return;
+        setBuffering(false);
         togglePlayAll(); // auto-play the next segment, all cameras in sync
         if (gap >= 1.5) showFootageGapNote(gap); // tell the user this jump is missing source footage
         dlog('cut', { to: sessionIdx, gap: +gap.toFixed(1) });
@@ -1762,6 +1768,12 @@
 
     function schedulePreload() {
       if (!session || sessionIdx >= session.length - 1) { resetPreload(); return; }
+      // GRID view: do NOT prebuild the next segment off-screen. Grid already keeps 6 live decoders
+      // busy; a 6-camera preload set on top means ~12 concurrent HW decode sessions, which overflows
+      // the GPU's decode-slot budget on constrained machines (Windows/iGPU) and spills streams to
+      // software decode → stop-and-go stutter. The auto-cut path falls back to a cold build gated by
+      // waitCamerasReady (a short, clean wait), which the user prefers over a stuttery seamless cut.
+      if (viewMode === 'grid') { resetPreload(); return; }
       const nextEv = session[sessionIdx + 1];
       if (preloadedSet && preloadedSet.key === nextEv.key) return;
       resetPreload();
@@ -2164,22 +2176,28 @@
       const now = performance.now();
       if (now - _wdLast < 850) return; // run ~1Hz regardless of the 250ms interval
       _wdLast = now;
+      // First pass: update per-camera "stuck since" state without acting.
+      let worst = null; // the single camera frozen the longest (we kick at most ONE per cycle)
       Object.entries(videos).forEach(([cam, v]) => {
         const el = v && v.el;
         if (!el || el.paused || el.ended || el.seeking) { _wdState[cam] = null; return; }
         const ct = el.currentTime || 0;
         const prev = _wdState[cam];
         if (!prev || Math.abs(ct - prev.ct) > 0.02) { _wdState[cam] = { ct, since: now }; return; }
-        // Not advancing since prev.since. Only kick a TRULY stuck decoder (frozen >3s). We deliberately
-        // do NOT kick transient decode-saturation stalls (a few seconds of slow/stop-and-go playback
-        // that resolve on their own) — a seek forces a keyframe re-decode that burns the GPU's decode
-        // budget and makes saturation worse. 3s clears normal cut hiccups but still rescues a hard lock.
+        // Not advancing since prev.since. Candidate for a kick only if TRULY frozen (>3s) with buffer.
         if (now - prev.since > 3000 && el.readyState >= 2 && bufferedAhead(el) > 0.4) {
-          try { el.currentTime = ct + 0.05; const p = el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
-          dlog('kick', { cam, ct: +ct.toFixed(2), ahead: +bufferedAhead(el).toFixed(2), rs: el.readyState });
-          _wdState[cam] = { ct: ct + 0.05, since: now };
+          if (!worst || prev.since < worst.since) worst = { cam, el, ct, since: prev.since };
         }
       });
+      // Kick ONLY the worst one. Kicking all stuck cameras at once fires N simultaneous seeks → N
+      // keyframe re-decodes → a decode thundering herd that makes saturation worse (the very thing
+      // that stalled them). One at a time lets the decoder recover without a self-inflicted spike.
+      if (worst) {
+        const { cam, el, ct } = worst;
+        try { el.currentTime = ct + 0.05; const p = el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+        dlog('kick', { cam, ct: +ct.toFixed(2), ahead: +bufferedAhead(el).toFixed(2), rs: el.readyState });
+        _wdState[cam] = { ct: ct + 0.05, since: now };
+      }
     }
 
     function attachMasterListeners() {
@@ -2928,7 +2946,11 @@ message SeiMetadata {
           done++;
           const lab = document.getElementById('telemetry-label');
           if (lab) lab.textContent = segs.length > 1 ? TR('controls.telemetry.loading.progress', done, segs.length) : TR('controls.telemetry.loading');
-          await new Promise(r => setTimeout(r, 0)); // yield so playback stays smooth
+          // Yield BANDWIDTH, not just the event loop: each background segment is a full ~74MB clip
+          // read (file.arrayBuffer). Reading all of them back-to-back saturates a slow USB and starves
+          // the live video streams' own fetches → playback stalls. While playing, space the reads out
+          // so disk I/O is shared; when paused, go fast. The current segment already parsed first.
+          await new Promise(r => setTimeout(r, isPlaying ? 350 : 0));
         }
 
         if (!anySamples) { telemetry = null; telemetryEnabled = false; setTelemetryBtn('none'); updateTelemetryHUD(); return; }
