@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.16.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.17.0</div>
         </div>
       </div>
       
@@ -534,6 +534,13 @@
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
           <button onclick="toggleView()" id="view-btn" title="切換檢視：主畫面 ↔ 六宮格（全部鏡頭）" data-i18n-title="controls.view.title"
                   class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 flex items-center gap-1.5 text-xs"><i class="fa-solid fa-table-cells" id="view-icon"></i><span id="view-label" data-i18n="controls.view.grid">六宮格</span></button>
+
+          <!-- Per-camera on/off (also the manual control for shedding decode load) -->
+          <div class="relative">
+            <button onclick="toggleCamPanel(event)" id="cams-btn" data-i18n-title="cams.btn.title"
+                    class="px-2.5 py-1.5 border border-zinc-700 rounded-xl hover:bg-zinc-800 flex items-center gap-1.5 text-xs"><i class="fa-solid fa-video"></i><span data-i18n="cams.btn">鏡頭</span><span id="cams-off-badge" class="hidden text-[10px] font-semibold text-amber-400"></span></button>
+            <div id="cams-panel" class="hidden absolute z-50 left-0 mt-1 bg-zinc-900 border border-zinc-700 rounded-xl p-3 shadow-2xl" style="top:100%;min-width:210px;"></div>
+          </div>
           <div class="flex items-center gap-x-1.5 pl-3 border-l border-zinc-800">
             <span class="text-xs text-zinc-500" data-i18n="controls.speed">速度</span>
             <select id="speed-select" onchange="setPlaybackSpeed(this.value)"
@@ -915,11 +922,37 @@
       'hint.slowRead.body': '讀取速度偏慢 — 來源（USB／隨身碟）可能跟不上多鏡頭播放，畫面會卡頓。建議把影片複製到本機 SSD 再播。',
       'hint.slowRead.dismiss': '關閉',
       'hint.slowRead.downloadLog': '下載診斷記錄',
+      'cams.btn': '鏡頭',
+      'cams.btn.title': '開關各鏡頭（關閉部分鏡頭可在解碼吃力時維持流暢）',
+      'cams.panel.hint': '關閉鏡頭可減輕解碼負擔、維持流暢',
+      'cams.main': '（主畫面）',
+      'cams.enableAll': '全部開啟',
+      'cams.essentialOnly': '只留主畫面＋前鏡頭',
+      'cams.offBadge': '{0} 關',
+      'cams.decodeHint': '偵測到此片段解碼吃力（畫面複雜或讀取慢）。可在「鏡頭」選單關閉部分鏡頭以維持流暢。',
+      'cams.reduce': '減少鏡頭',
+      'cams.dismiss': '不用',
+      'cams.reducedPill': '已關閉部分鏡頭以維持流暢',
+      'cams.restoreAll': '還原全部鏡頭',
+      'cams.hide': '隱藏',
     });
     Object.assign(I18N.en, {
       'hint.slowRead.body': 'Slow read speed — the source (USB / flash drive) may not keep up with multi-camera playback, causing stutter. Copy the clips to a local SSD for smooth playback.',
       'hint.slowRead.dismiss': 'Close',
       'hint.slowRead.downloadLog': 'Download log',
+      'cams.btn': 'Cameras',
+      'cams.btn.title': 'Turn cameras on/off (disabling some keeps playback smooth when decoding is heavy)',
+      'cams.panel.hint': 'Turn cameras off to ease decoding and keep playback smooth',
+      'cams.main': '(main)',
+      'cams.enableAll': 'Enable all',
+      'cams.essentialOnly': 'Main + front only',
+      'cams.offBadge': '{0} off',
+      'cams.decodeHint': 'This segment is decode-heavy (complex picture or slow reads). Use the "Cameras" menu to turn some off and keep playback smooth.',
+      'cams.reduce': 'Reduce cameras',
+      'cams.dismiss': 'No thanks',
+      'cams.reducedPill': 'Some cameras turned off to keep playback smooth',
+      'cams.restoreAll': 'Restore all cameras',
+      'cams.hide': 'Hide',
     });
     let currentLang = (() => { try { return localStorage.getItem('trv_lang') === 'en' ? 'en' : 'zh'; } catch (e) { return 'zh'; } })();
     function TR(key) { // translate + interpolate {0},{1}…  (named TR to avoid clashing with local `t` vars)
@@ -2030,7 +2063,7 @@
 
       // Watermark/timestamp only render on the stage; refresh after re-parenting
       updateWatermarkVisibility();
-      if (_reducedCams) applyReducedCameras(); // the essential set (front + spotlight) may have changed
+      applyCamStates(); // re-pin off cameras; the spotlight (always-on) may have changed
     }
 
     // ===== Grid ("六宮格") view: all cameras equal-size in the export-style surround layout =====
@@ -2070,7 +2103,7 @@
         stage.appendChild(w);
       });
       updateWatermarkVisibility();
-      if (_reducedCams) applyReducedCameras(); // keep shed cameras paused/dimmed after a re-render
+      applyCamStates(); // keep off cameras paused/dimmed after a re-render
     }
 
     // Render the spotlight view (one big + thumbnail strip), clearing any grid layout first.
@@ -2213,7 +2246,12 @@
         const movedForward = mt > mp.ct + 0.25;
         if (movedForward && (!mp.target || playedPastTarget)) {
           _wdState['__master'] = { ct: mt, since: now, tries: 0, target: 0 };
-          masterAdvancing = true; _decodeBound = false; _kickTimes = [];
+          masterAdvancing = true;
+          // Do NOT clear the kick history here — a "limping" segment recovers for a few seconds between
+          // skips, and clearing on each brief recovery would stop the decode-bound count from ever
+          // reaching 3 (the v1.16.0 miss). Just age the window; only a sustained 15s with no skip clears it.
+          _kickTimes = _kickTimes.filter(t => now - t < 15000);
+          if (!_kickTimes.length) _decodeBound = false;
         } else {
           mp.ct = Math.max(mp.ct, mt); // furthest seen; keep since/tries/target so freeze-age accrues
         }
@@ -2255,16 +2293,15 @@
         if (_kickTimes.length >= 3 && !_decodeBound) { _decodeBound = true; dlog('decodebound', { ct: +mt.toFixed(2), kicks: _kickTimes.length }); }
       }
 
-      if (_decodeBound && !_reducedCams) offerReduceCameras();
+      if (_decodeBound && _disabledCams.size === 0) offerReduceCameras();
     }
 
-    // ===== Capability fallback: shed decode load by pausing non-essential cameras =================
-    // When a segment is decode-bound (the watchdog keeps having to skip the master forward), we OFFER
-    // — consent-first — to pause everything except the main view + front camera. Pausing (not removing)
-    // frees GPU decode THROUGHPUT for the remaining streams while keeping the elements alive (valid src,
-    // frozen last frame, still in the `videos` map → export / telemetry / cuts are unaffected). Reversible.
-    let _reducedCams = false;
-    function essentialCams() { const s = new Set(['front']); if (spotlightCam) s.add(spotlightCam); return s; }
+    // ===== Per-camera on/off — manual control + auto capability fallback ==========================
+    // The user can turn any camera off (the "鏡頭" menu); a decode-heavy segment also auto-OFFERS it.
+    // "Off" = PAUSE the element (frozen frame + ⏸ badge), which frees GPU decode THROUGHPUT for the
+    // rest while keeping it in the `videos` map with a valid src — so export / telemetry / cuts are all
+    // unaffected (NOT releaseVideo). Reversible. The current spotlight/main camera can never be off.
+    let _disabledCams = new Set(); // camera keys the user (or fallback) turned off
     function setCamPaused(v, paused) {
       if (!v || !v.el) return;
       const w = v.wrapper;
@@ -2272,12 +2309,12 @@
       if (paused) {
         try { v.el.pause(); } catch (e) {}
         if (w) {
-          w.style.opacity = '0.45';
+          w.style.opacity = '0.4';
           if (!badge) {
             badge = document.createElement('div');
             badge.className = 'cam-paused-badge';
             badge.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;pointer-events:none;z-index:6;text-shadow:0 1px 4px rgba(0,0,0,.9);';
-            badge.innerHTML = '<i class="fa-solid fa-pause"></i>';
+            badge.innerHTML = '<i class="fa-solid fa-eye-slash"></i>';
             (w.querySelector('.video-container') || w).appendChild(badge);
           }
           badge.style.display = 'flex';
@@ -2287,68 +2324,115 @@
         if (isPlaying) { try { const p = v.el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
       }
     }
-    // (Re)apply the reduced-camera state to the current set — also called after every mount so the
-    // choice persists across segment cuts / jumps.
-    function applyReducedCameras() {
+    // (Re)apply the on/off state to the current set — called after every mount/render so it persists
+    // across segment cuts / jumps / view changes. The spotlight (main) camera is always forced ON.
+    function applyCamStates() {
       if (!videos) return;
-      const keep = essentialCams();
-      Object.entries(videos).forEach(([cam, v]) => setCamPaused(v, _reducedCams && !keep.has(cam)));
+      if (spotlightCam) _disabledCams.delete(spotlightCam);
+      Object.entries(videos).forEach(([cam, v]) => setCamPaused(v, _disabledCams.has(cam)));
+      updateCamsBadge();
     }
-    function setReducedCameras(on) {
-      _reducedCams = on;
-      applyReducedCameras();
-      if (!on) { _decodeBound = false; _kickTimes = []; syncToMaster(); } // resume → realign the lot
-      updateReduceUI();
-      dlog('reducecams', { on: on ? 1 : 0, keep: Array.from(essentialCams()) });
+    function setCamOff(cam, off) {
+      if (off && cam === spotlightCam) return; // can't turn off the camera you're watching
+      if (off) _disabledCams.add(cam); else _disabledCams.delete(cam);
+      applyCamStates();
+      if (!off) syncToMaster(); // re-enabled → realign it to the master
+      updateReducePill(); // NOTE: do NOT rebuild the panel here — it would detach the just-clicked checkbox
+      dlog('camtoggle', { cam: cam, off: off ? 1 : 0, list: Array.from(_disabledCams) });
     }
-    // The consent toast (offer) + the persistent "restore" pill share one element.
+    function reduceToEssential() { // one-click / auto: keep only main + front
+      _disabledCams = new Set(Object.keys(videos || {}).filter(c => c !== 'front' && c !== spotlightCam));
+      applyCamStates(); buildCamPanel(); updateReducePill();
+      const p = document.getElementById('cams-panel'); if (p) p.classList.add('hidden');
+      dlog('reducecams', { keep: ['front', spotlightCam].filter(Boolean) });
+    }
+    function restoreAllCams() {
+      _disabledCams.clear(); _decodeBound = false; _kickTimes = [];
+      applyCamStates(); syncToMaster(); buildCamPanel(); updateReducePill();
+      dlog('reducecams', { keep: 'all' });
+    }
+    function updateCamsBadge() {
+      const b = document.getElementById('cams-off-badge'); if (!b) return;
+      const n = videos ? Object.keys(videos).filter(c => _disabledCams.has(c)).length : 0;
+      if (n > 0) { b.textContent = TR('cams.offBadge', n); b.classList.remove('hidden'); } else { b.classList.add('hidden'); }
+    }
+
+    // ----- The "鏡頭" popover: per-camera checkboxes -----
+    function toggleCamPanel(ev) {
+      if (ev) ev.stopPropagation();
+      const p = document.getElementById('cams-panel'); if (!p) return;
+      const show = p.classList.contains('hidden');
+      if (show) { buildCamPanel(); p.classList.remove('hidden'); setTimeout(() => document.addEventListener('click', _closeCamPanelOnce), 0); }
+      else p.classList.add('hidden');
+    }
+    function _closeCamPanelOnce(e) {
+      const p = document.getElementById('cams-panel'), b = document.getElementById('cams-btn');
+      if (p && !p.contains(e.target) && b && !b.contains(e.target)) { p.classList.add('hidden'); document.removeEventListener('click', _closeCamPanelOnce); }
+    }
+    function buildCamPanel() {
+      const p = document.getElementById('cams-panel'); if (!p) return;
+      const cams = Object.keys(videos || {}).sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
+      if (!cams.length) { p.innerHTML = ''; return; }
+      let html = '<div class="text-[11px] text-zinc-400 mb-2 max-w-[200px]">' + TR('cams.panel.hint') + '</div>';
+      cams.forEach(c => {
+        const off = _disabledCams.has(c), isSpot = c === spotlightCam;
+        html += '<label class="flex items-center gap-2 py-1 ' + (isSpot ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer') + '">'
+          + '<input type="checkbox" ' + (off ? '' : 'checked') + ' ' + (isSpot ? 'disabled' : '') + ' class="accent-[#e82127]" onchange="setCamOff(\'' + c + '\', !this.checked)">'
+          + '<span class="text-[13px]">' + camLabel(c) + (isSpot ? ' <span class="text-zinc-500">' + TR('cams.main') + '</span>' : '') + '</span></label>';
+      });
+      html += '<div class="flex gap-3 mt-2 pt-2 border-t border-zinc-700">'
+        + '<button onclick="restoreAllCams()" class="text-[12px] font-semibold text-[#e82127]">' + TR('cams.enableAll') + '</button>'
+        + '<button onclick="reduceToEssential()" class="text-[12px] text-zinc-400 hover:text-zinc-200">' + TR('cams.essentialOnly') + '</button></div>';
+      p.innerHTML = html;
+    }
+
+    // ----- Auto offer toast (decode-bound) + persistent "some cameras off" pill -----
+    let _reduceHintLast = 0;
     function offerReduceCameras() {
       const now = performance.now();
-      if (_reduceHintLast && now - _reduceHintLast < 30000) return; // don't nag
+      if (_reduceHintLast && now - _reduceHintLast < 45000) return; // don't nag
       _reduceHintLast = now;
-      updateReduceUI('offer');
+      const el = ensureReduceToast();
+      const body = el.querySelector('.rch-body'), act = el.querySelector('.rch-act'), x = el.querySelector('.rch-x');
+      el.style.background = 'rgba(180,83,9,0.97)';
+      body.textContent = TR('cams.decodeHint');
+      act.textContent = TR('cams.reduce');
+      act.onclick = () => { reduceToEssential(); el.style.display = 'none'; };
+      x.textContent = TR('cams.dismiss');
+      x.onclick = () => { el.style.display = 'none'; _reduceHintLast = performance.now() + 180000; }; // snooze ~3min
+      el.style.display = 'flex'; el.style.opacity = '1';
     }
-    let _reduceHintLast = 0;
-    function updateReduceUI(mode) {
+    function ensureReduceToast() {
       let el = document.getElementById('reduce-cams-hint');
       if (!el) {
         el = document.createElement('div');
         el.id = 'reduce-cams-hint';
-        el.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;max-width:600px;background:rgba(180,83,9,0.97);color:#fff;padding:11px 15px;border-radius:14px;font-size:13px;line-height:1.5;box-shadow:0 10px 30px rgba(0,0,0,0.5);display:flex;gap:12px;align-items:center;transition:opacity .25s;';
+        el.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;max-width:600px;color:#fff;padding:11px 15px;border-radius:14px;font-size:13px;line-height:1.5;box-shadow:0 10px 30px rgba(0,0,0,0.5);display:flex;gap:12px;align-items:center;transition:opacity .25s;';
         el.innerHTML = '<i class="fa-solid fa-bolt" style="margin-top:1px"></i>'
           + '<span class="rch-body" style="flex:1"></span>'
           + '<button class="rch-act" style="font-weight:700;white-space:nowrap;text-decoration:underline;"></button>'
           + '<button class="rch-x" style="font-weight:600;white-space:nowrap;opacity:.85;"></button>';
         document.body.appendChild(el);
       }
-      const zh = currentLang !== 'en';
+      return el;
+    }
+    // Persistent pill shown whenever some cameras are off, with a one-click restore.
+    function updateReducePill() {
+      const anyOff = videos && Object.keys(videos).some(c => _disabledCams.has(c));
+      if (!anyOff) { const e = document.getElementById('reduce-cams-hint'); if (e) e.style.display = 'none'; return; }
+      const el = ensureReduceToast();
       const body = el.querySelector('.rch-body'), act = el.querySelector('.rch-act'), x = el.querySelector('.rch-x');
-      if (_reducedCams) {
-        // persistent restore pill
-        el.style.background = 'rgba(39,39,42,0.97)';
-        body.textContent = zh ? '已暫停部分鏡頭以維持流暢（保留主畫面＋前鏡頭）' : 'Paused some cameras to keep playback smooth (kept main + front)';
-        act.textContent = zh ? '還原全部鏡頭' : 'Restore all';
-        act.onclick = () => setReducedCameras(false);
-        x.textContent = zh ? '隱藏' : 'Hide';
-        x.onclick = () => { el.style.display = 'none'; };
-        el.style.display = 'flex'; el.style.opacity = '1';
-      } else if (mode === 'offer') {
-        el.style.background = 'rgba(180,83,9,0.97)';
-        body.textContent = zh ? '偵測到此片段解碼吃力（畫面較複雜，6 路同時解碼超出負荷）。要只播主畫面＋前鏡頭以維持流暢嗎？'
-                              : 'This segment is decode-heavy (6 streams exceed this device). Play only the main view + front to keep it smooth?';
-        act.textContent = zh ? '減少鏡頭' : 'Reduce cameras';
-        act.onclick = () => setReducedCameras(true);
-        x.textContent = zh ? '不用' : 'No thanks';
-        x.onclick = () => { el.style.display = 'none'; _reduceHintLast = performance.now() + 120000; }; // snooze ~2min
-        el.style.display = 'flex'; el.style.opacity = '1';
-      } else {
-        el.style.display = 'none';
-      }
+      el.style.background = 'rgba(39,39,42,0.97)';
+      body.textContent = TR('cams.reducedPill');
+      act.textContent = TR('cams.restoreAll'); act.onclick = () => restoreAllCams();
+      x.textContent = TR('cams.hide'); x.onclick = () => { el.style.display = 'none'; };
+      el.style.display = 'flex'; el.style.opacity = '1';
     }
 
     function attachMasterListeners() {
       if (!masterVideo) return;
       if (timeUpdateInterval) clearInterval(timeUpdateInterval);
+      _kickTimes = []; _decodeBound = false; // fresh decode-bound detection per segment (keep user cam choices)
 
       // One-time: pause programmatic bar updates while the user drags the slider (so the faster
       // rVFC-driven updates don't fight the drag thumb).
@@ -2515,13 +2599,12 @@
         if (masterVideo && masterVideo.duration > 0) masterVideo.play().catch(() => {});
         requestAnimationFrame(() => {
           if (!isPlaying) return;
-          // In reduced-camera mode, DON'T even start the shed cameras (keep main + front only) — that's
-          // the whole point: fewer concurrent decoders. applyReducedCameras() then pins their paused state.
-          const keep = essentialCams();
+          // Don't even start cameras the user turned off — that's the point: fewer concurrent decoders.
+          // applyCamStates() then pins their paused state (frozen frame + badge).
           const others = Object.entries(videos)
-            .filter(([cam, v]) => v.el !== masterVideo && v.el.duration > 0 && (!_reducedCams || keep.has(cam)))
+            .filter(([cam, v]) => v.el !== masterVideo && v.el.duration > 0 && !_disabledCams.has(cam))
             .map(([cam, v]) => v);
-          Promise.all(others.map(v => v.el.play().catch(() => {}))).then(() => { syncToMaster(); if (_reducedCams) applyReducedCameras(); });
+          Promise.all(others.map(v => v.el.play().catch(() => {}))).then(() => { syncToMaster(); applyCamStates(); });
         });
       }
     }
@@ -4105,9 +4188,10 @@ message SeiMetadata {
 
     function closePlayer() {
       setBuffering(false); // never leave the buffering veil up
-      // Reset the capability-fallback state + hide its toast.
-      _reducedCams = false; _decodeBound = false; _kickTimes = [];
+      // Reset the capability-fallback state + hide its toast/panel.
+      _disabledCams.clear(); _decodeBound = false; _kickTimes = [];
       const rh = document.getElementById('reduce-cams-hint'); if (rh) rh.style.display = 'none';
+      const cp = document.getElementById('cams-panel'); if (cp) cp.classList.add('hidden');
       // Stop everything — release decoders, not just pause, so closing the player frees the GPU sessions.
       Object.values(videos).forEach(v => {
         try {
