@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.13.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.0</div>
         </div>
       </div>
       
@@ -913,11 +913,13 @@
     // Supplementary strings (added without touching the big generated dict above).
     Object.assign(I18N.zh, {
       'hint.slowRead.body': '讀取速度偏慢 — 來源（USB／隨身碟）可能跟不上多鏡頭播放，畫面會卡頓。建議把影片複製到本機 SSD 再播。',
-      'hint.slowRead.dismiss': '知道了',
+      'hint.slowRead.dismiss': '關閉',
+      'hint.slowRead.downloadLog': '下載診斷記錄',
     });
     Object.assign(I18N.en, {
       'hint.slowRead.body': 'Slow read speed — the source (USB / flash drive) may not keep up with multi-camera playback, causing stutter. Copy the clips to a local SSD for smooth playback.',
-      'hint.slowRead.dismiss': 'Got it',
+      'hint.slowRead.dismiss': 'Close',
+      'hint.slowRead.downloadLog': 'Download log',
     });
     let currentLang = (() => { try { return localStorage.getItem('trv_lang') === 'en' ? 'en' : 'zh'; } catch (e) { return 'zh'; } })();
     function TR(key) { // translate + interpolate {0},{1}…  (named TR to avoid clashing with local `t` vars)
@@ -1417,6 +1419,7 @@
       await loadVideosForEvent(currentEvent);
       schedulePreload();
       measureSessionDurations(); // background: get real per-segment durations for an accurate timeline
+      dlog('select', { segs: session ? session.length : 1, idx: sessionIdx, cams: Object.keys(currentEvent.clips || {}).length });
       setTimeout(() => checkReadSpeed(currentEvent), 1500); // background: proactively probe source read speed
     }
 
@@ -1448,6 +1451,7 @@
         isPlaying = false;
         togglePlayAll(); // auto-play the next segment (master first, thumbs deferred)
         if (gap >= 1.5) showFootageGapNote(gap); // tell the user this jump is missing source footage
+        dlog('cut', { to: sessionIdx, gap: +gap.toFixed(1) });
         // Cosmetic updates + the heavy next-segment preload are NOT needed for the cut itself —
         // run them after the new segment is playing so they don't jank the first post-cut frames.
         requestAnimationFrame(() => {
@@ -1518,6 +1522,7 @@
         // Error handling + graceful per-cam feedback (addresses silent "無法播放影片")
         videoEl.addEventListener('error', () => {
           console.error('Video load/play error for', cam, videoEl.error);
+          dlog('video-error', { cam, code: videoEl.error ? videoEl.error.code : null });
           const badge = document.createElement('div');
           badge.className = 'absolute bottom-1 right-1 text-[9px] px-1.5 py-0.5 bg-red-900/80 text-red-300 rounded';
           badge.textContent = TR('video.decodeFailed');
@@ -1820,34 +1825,76 @@
       });
     }
 
-    // ===== Slow-source (USB) read detection — warn when reads can't keep up with multi-cam playback =====
-    let slowReadWarned = false, stallTimer = null, stallCount = 0, stallWindowStart = 0;
-    function showSlowReadHint() {
-      if (slowReadWarned) return;
-      slowReadWarned = true;
+    // ===== Diagnostics log (always-on ring buffer) + slow-source (USB) read detection =====
+    const DBG = []; const DBG_MAX = 4000; let DBG_T0 = 0;
+    function dlog(cat, obj) {
+      try { if (!DBG_T0) DBG_T0 = performance.now(); DBG.push(Object.assign({ t: Math.round(performance.now() - DBG_T0), cat }, obj || {})); if (DBG.length > DBG_MAX) DBG.shift(); } catch (e) {}
+    }
+    function bufferedAhead(v) { // seconds buffered beyond the current play head (0 = starved)
+      try { for (let i = 0; i < v.buffered.length; i++) { const s = v.buffered.start(i), e = v.buffered.end(i); if (v.currentTime >= s - 0.25 && v.currentTime <= e + 0.25) return e - v.currentTime; } } catch (e) {}
+      return 0;
+    }
+    function downloadDebugLog() {
+      const fb = (() => { const n = document.getElementById('fallback-note'); return n ? !n.classList.contains('hidden') : false; })();
+      const info = {
+        version: ((document.getElementById('app-version') || {}).textContent || ''), when: new Date().toString(),
+        userAgent: navigator.userAgent, platform: navigator.platform, cores: navigator.hardwareConcurrency, deviceMemoryGB: navigator.deviceMemory,
+        lang: currentLang, viewMode, folderMode: fb ? 'file-picker (fallback)' : 'File System Access',
+        sessionLen: session ? session.length : (currentEvent ? 1 : 0), sessionIdx, telemetry: !!telemetry,
+        totalStalls, screen: screen.width + 'x' + screen.height + ' @' + (window.devicePixelRatio || 1) + 'x',
+      };
+      const out = ['=== Tesla Record Viewer diagnostics ===', JSON.stringify(info, null, 2), '', '=== event log (t = ms since first event) ==='].concat(DBG.map(e => JSON.stringify(e)));
+      const blob = new Blob([out.join('\n')], { type: 'text/plain' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = 'trv-diagnostics-' + Date.now() + '.txt'; document.body.appendChild(a); a.click();
+      setTimeout(() => { try { a.remove(); URL.revokeObjectURL(a.href); } catch (e) {} }, 1500);
+      dlog('log-downloaded', {});
+    }
+
+    let totalStalls = 0, stallTimer = null, stallCount = 0, stallWindowStart = 0, slowHintLastShown = 0, waitingStart = 0;
+    // Repeatable hint (re-shows on recurring stalls, with a short cooldown so it doesn't spam) + a one-click
+    // diagnostics-log download so the issue can be reported.
+    function showSlowReadHint(reason) {
+      dlog('hint', { reason: reason || '', totalStalls });
+      const now = performance.now();
+      if (now - slowHintLastShown < 6000) return;
+      slowHintLastShown = now;
       let el = document.getElementById('slow-read-hint');
       if (!el) {
         el = document.createElement('div');
         el.id = 'slow-read-hint';
-        el.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;max-width:540px;background:rgba(180,83,9,0.97);color:#fff;padding:12px 16px;border-radius:14px;font-size:13px;line-height:1.5;box-shadow:0 10px 30px rgba(0,0,0,0.5);display:flex;gap:12px;align-items:flex-start;';
-        el.innerHTML = '<i class="fa-solid fa-gauge-high" style="margin-top:2px"></i><span class="srh-body" style="flex:1"></span><button class="srh-dismiss" style="font-weight:600;white-space:nowrap;text-decoration:underline;"></button>';
-        el.querySelector('.srh-dismiss').onclick = () => { try { el.remove(); } catch (e) {} };
+        el.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;max-width:580px;background:rgba(180,83,9,0.97);color:#fff;padding:12px 16px;border-radius:14px;font-size:13px;line-height:1.5;box-shadow:0 10px 30px rgba(0,0,0,0.5);display:flex;gap:12px;align-items:flex-start;transition:opacity .25s;';
+        el.innerHTML = '<i class="fa-solid fa-gauge-high" style="margin-top:2px"></i>'
+          + '<span style="flex:1"><span class="srh-body"></span><span class="srh-count" style="opacity:.8"></span></span>'
+          + '<button class="srh-dl" style="font-weight:600;white-space:nowrap;text-decoration:underline;"></button>'
+          + '<button class="srh-x" style="font-weight:600;white-space:nowrap;opacity:.85;"></button>';
+        el.querySelector('.srh-dl').onclick = downloadDebugLog;
+        el.querySelector('.srh-x').onclick = () => { try { el.style.display = 'none'; } catch (e) {} };
         document.body.appendChild(el);
       }
       el.querySelector('.srh-body').textContent = TR('hint.slowRead.body');
-      el.querySelector('.srh-dismiss').textContent = TR('hint.slowRead.dismiss');
+      el.querySelector('.srh-count').textContent = totalStalls > 0 ? ' (' + totalStalls + ')' : '';
+      el.querySelector('.srh-dl').textContent = TR('hint.slowRead.downloadLog');
+      el.querySelector('.srh-x').textContent = TR('hint.slowRead.dismiss');
+      el.style.display = 'flex'; el.style.opacity = '1';
+      if (el._timer) clearTimeout(el._timer);
+      el._timer = setTimeout(() => { try { el.style.opacity = '0'; } catch (e) {} }, 8000);
     }
-    // Reactive: the master <video> fires 'waiting' when it buffer-starves. A stall past the grace window
-    // (or many short stalls) means the source can't feed playback fast enough.
+    // Reactive: the master <video> fires 'waiting' when it buffer-starves.
     function onMasterWaiting() {
-      if (!isPlaying || isSeeking || slowReadWarned) return;
-      if (!stallTimer) stallTimer = setTimeout(() => { stallTimer = null; showSlowReadHint(); }, 2500);
+      if (!isPlaying || isSeeking || !masterVideo) return;
+      totalStalls++; waitingStart = performance.now();
+      dlog('waiting', { ct: +(masterVideo.currentTime || 0).toFixed(2), rs: masterVideo.readyState, ahead: +bufferedAhead(masterVideo).toFixed(2), seg: sessionIdx });
+      if (!stallTimer) stallTimer = setTimeout(() => { stallTimer = null; showSlowReadHint('stall>2s'); }, 2200);
       const now = performance.now();
       if (now - stallWindowStart > 20000) { stallWindowStart = now; stallCount = 0; }
-      if (++stallCount >= 4) showSlowReadHint();
+      if (++stallCount >= 3) showSlowReadHint('frequent');
     }
-    function onMasterResumed() { if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; } }
-    function resetStallState() { if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; } stallCount = 0; }
+    function onMasterResumed() {
+      if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
+      if (waitingStart) { dlog('resumed', { afterMs: Math.round(performance.now() - waitingStart) }); waitingStart = 0; }
+    }
+    function resetStallState() { if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; } stallCount = 0; waitingStart = 0; }
     // Proactive: time a small sequential read → MB/s. 6 cams (~10 Mbps each) + preload need roughly
     // >15 MB/s sustained, so flag a clearly-slow source up front.
     async function probeReadSpeed(file) {
@@ -1862,11 +1909,14 @@
     }
     async function checkReadSpeed(ev) {
       try {
-        if (slowReadWarned || !ev || !ev.clips) return;
+        if (!ev || !ev.clips) return;
         const cam = Object.keys(ev.clips).sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b))[0];
         if (!cam) return;
         const file = await getClipFile(ev.clips[cam]);
-        if (file) { const mbps = await probeReadSpeed(file); if (mbps != null && mbps < 12) showSlowReadHint(); }
+        if (!file) return;
+        const mbps = await probeReadSpeed(file);
+        dlog('readprobe', { mbps: mbps != null ? +mbps.toFixed(1) : null, sizeMB: +(((file.size || 0)) / 1048576).toFixed(1) });
+        if (mbps != null && mbps < 12) showSlowReadHint('probe<12');
       } catch (e) {}
     }
 
@@ -3309,7 +3359,11 @@ message SeiMetadata {
       try {
         const file = await getClipFile(seg.clips[cam]);
         if (file) {
-          const mp4 = new DashcamMP4(await file.arrayBuffer());
+          const _t0 = performance.now();
+          const buf = await file.arrayBuffer(); // full-clip read — a direct throughput signal
+          const _ms = performance.now() - _t0, _mb = buf.byteLength / 1048576;
+          dlog('clipread', { cam, mb: +_mb.toFixed(1), ms: Math.round(_ms), mbps: _ms > 0 ? +(_mb / (_ms / 1000)).toFixed(1) : null });
+          const mp4 = new DashcamMP4(buf);
           const config = mp4.getConfig();
           const frames = mp4.parseFrames(SeiType);
           const durations = config.durations || [];
@@ -3800,6 +3854,8 @@ message SeiMetadata {
     // Keyboard shortcuts
     function setupKeyboard() {
       document.addEventListener('keydown', (e) => {
+        // Cmd/Ctrl+Shift+L: download the diagnostics log anytime (works even mid-export)
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'l' || e.key === 'L')) { e.preventDefault(); downloadDebugLog(); return; }
         // While exporting, the only shortcut is Esc to cancel
         if (isExporting) {
           if (e.key === 'Escape') { e.preventDefault(); cancelExport(); }
@@ -3864,6 +3920,7 @@ message SeiMetadata {
       buildTelemSettingsUI();
       setupKeyboard();
       applyLang(); // apply the persisted language to all data-i18n elements + dynamic labels
+      dlog('start', { ua: navigator.userAgent, platform: navigator.platform, cores: navigator.hardwareConcurrency, mem: navigator.deviceMemory });
 
       // Continuous-playback toggle
       const ct = document.getElementById('continuous-toggle');
