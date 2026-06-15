@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.5</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.6</div>
         </div>
       </div>
       
@@ -2171,28 +2171,32 @@
     // EVERY active camera because in grid view individual cells freeze independently of the master.
     let _wdState = {};   // cam -> { ct, since } : last position + when we first saw it stuck there
     let _wdLast = 0;     // throttle marker (perf ms)
+    let _playStartedAt = 0; // when playback last (re)started — for the watchdog startup grace
     function playbackWatchdog() {
       if (!isPlaying) { _wdState = {}; return; }
       const now = performance.now();
       if (now - _wdLast < 850) return; // run ~1Hz regardless of the 250ms interval
       _wdLast = now;
-      // First pass: update per-camera "stuck since" state without acting.
-      let worst = null; // the single camera frozen the longest (we kick at most ONE per cycle)
+      // STARTUP GRACE: a freshly (re)started segment — especially a complex/high-bitrate one — needs
+      // a few seconds of UNINTERRUPTED decode to stabilize. A kick is a seek, which flushes the
+      // decoder back to a keyframe and destroys the forward progress it was building; doing that
+      // during warm-up actually PROLONGS the stall (observed: a clip kicked 6× stayed frozen ~10s,
+      // then recovered the moment the kicks stopped). So never intervene in the first few seconds.
+      const inStartup = (now - _playStartedAt) < 5000;
+      // First pass: update per-camera "stuck since" state; pick the single longest-frozen camera.
+      let worst = null; // we kick at most ONE per cycle (N simultaneous seeks = a decode thundering herd)
       Object.entries(videos).forEach(([cam, v]) => {
         const el = v && v.el;
         if (!el || el.paused || el.ended || el.seeking) { _wdState[cam] = null; return; }
         const ct = el.currentTime || 0;
         const prev = _wdState[cam];
         if (!prev || Math.abs(ct - prev.ct) > 0.02) { _wdState[cam] = { ct, since: now }; return; }
-        // Not advancing since prev.since. Candidate for a kick only if TRULY frozen (>3s) with buffer.
-        if (now - prev.since > 3000 && el.readyState >= 2 && bufferedAhead(el) > 0.4) {
+        // Candidate only if TRULY frozen (>4s) with buffer — i.e. a real lock, not slow decode.
+        if (now - prev.since > 4000 && el.readyState >= 2 && bufferedAhead(el) > 0.4) {
           if (!worst || prev.since < worst.since) worst = { cam, el, ct, since: prev.since };
         }
       });
-      // Kick ONLY the worst one. Kicking all stuck cameras at once fires N simultaneous seeks → N
-      // keyframe re-decodes → a decode thundering herd that makes saturation worse (the very thing
-      // that stalled them). One at a time lets the decoder recover without a self-inflicted spike.
-      if (worst) {
+      if (worst && !inStartup) {
         const { cam, el, ct } = worst;
         try { el.currentTime = ct + 0.05; const p = el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
         dlog('kick', { cam, ct: +ct.toFixed(2), ahead: +bufferedAhead(el).toFixed(2), rs: el.readyState });
@@ -2353,6 +2357,7 @@
         // Optimistically reflect the playing state immediately (the button used to
         // update before the async play() promise set isPlaying, so it stuck on 播放)
         setBuffering(false); // playback is starting → drop any "buffering…" veil
+        _playStartedAt = performance.now(); // start the watchdog startup grace from here
         isPlaying = true;
         updatePlayButton();
         // Play the MASTER first so the main picture appears with minimal latency, then defer the
