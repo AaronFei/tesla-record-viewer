@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.2</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.3</div>
         </div>
       </div>
       
@@ -1651,17 +1651,13 @@
           </div>`;
         const videoEl = wrapper.querySelector('video');
         videoEl.src = url; videoEl.dataset.camera = cam; videoEl.muted = true;
-        // Warm the decode pipeline: briefly play→pause→rewind so frame 0 is already
-        // decoded & painted. Without this, mount+play at the segment boundary has to
-        // cold-start the decoder, which shows as a short pause. Done off-screen, ~50s ahead.
-        videoEl.addEventListener('loadeddata', () => {
-          try {
-            const p = videoEl.play();
-            if (p && p.then) p.then(() => {
-              try { videoEl.pause(); if (videoEl.currentTime > 0.04) videoEl.currentTime = 0; } catch (e) {}
-            }).catch(() => {});
-          } catch (e) {}
-        }, { once: true });
+        // NOTE: we deliberately do NOT warm-play the preload set here. preload="auto" buffers the
+        // DATA off-screen (fast), but spinning up all 6 preload decoders the moment they load means
+        // 6 live (grid) + 6 preload = 12 concurrent HW decode sessions DURING normal playback — which
+        // overflows the GPU's decode-session limit on Windows and spills streams to software decode,
+        // causing the stop-and-go stutter. Instead the decoders are woken just-in-time, ~1.2s before
+        // the cut, by maybePrerollNext() (only the spotlight truly plays; thumbnails do a 1-frame
+        // nudge), so steady-state stays at 6 decoders.
         videoEl.addEventListener('error', () => {
           const badge = document.createElement('div');
           badge.className = 'absolute bottom-1 right-1 text-[9px] px-1.5 py-0.5 bg-red-900/80 text-red-300 rounded';
@@ -2119,9 +2115,11 @@
         const ct = el.currentTime || 0;
         const prev = _wdState[cam];
         if (!prev || Math.abs(ct - prev.ct) > 0.02) { _wdState[cam] = { ct, since: now }; return; }
-        // Not advancing since prev.since. If it still has buffer + decoded frames, it's a wedged
-        // decoder (not starvation) → kick it once it's been frozen for >1.6s (past normal cut hiccups).
-        if (now - prev.since > 1600 && el.readyState >= 2 && bufferedAhead(el) > 0.4) {
+        // Not advancing since prev.since. Only kick a TRULY stuck decoder (frozen >3s). We deliberately
+        // do NOT kick transient decode-saturation stalls (a few seconds of slow/stop-and-go playback
+        // that resolve on their own) — a seek forces a keyframe re-decode that burns the GPU's decode
+        // budget and makes saturation worse. 3s clears normal cut hiccups but still rescues a hard lock.
+        if (now - prev.since > 3000 && el.readyState >= 2 && bufferedAhead(el) > 0.4) {
           try { el.currentTime = ct + 0.05; const p = el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
           dlog('kick', { cam, ct: +ct.toFixed(2), ahead: +bufferedAhead(el).toFixed(2), rs: el.readyState });
           _wdState[cam] = { ct: ct + 0.05, since: now };
