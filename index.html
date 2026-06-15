@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.6</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.7</div>
         </div>
       </div>
       
@@ -2163,44 +2163,58 @@
       }
     }
 
-    // --- Stuck-decoder watchdog -------------------------------------------------------------
-    // Even after we release old clips' decoders, a LIVE <video> can still wedge on Windows: its
-    // hardware decoder stops emitting frames mid-clip while the buffer stays full — we see
-    // currentTime frozen with seconds buffered ahead (NOT starvation; reads are fast). A tiny
-    // re-seek forces the decoder to flush + re-init at that point, which unsticks it. We watch
-    // EVERY active camera because in grid view individual cells freeze independently of the master.
-    let _wdState = {};   // cam -> { ct, since } : last position + when we first saw it stuck there
-    let _wdLast = 0;     // throttle marker (perf ms)
-    let _playStartedAt = 0; // when playback last (re)started — for the watchdog startup grace
+    // --- Playback watchdog: keep the 6 cameras aligned + unstick a wedged master ----------------
+    // Two jobs, run ~1Hz:
+    //  (1) DRIFT CORRECTION — the thumbnails sync to the master only at start/segment-cut ('play').
+    //      If a camera's decoder stalls mid-clip, its currentTime freezes while the master keeps
+    //      going, so it ends up behind and NOTHING pulls it back. Here we continuously re-align any
+    //      non-master camera that has drifted from the master past a tolerance — this is what keeps
+    //      the six views in sync AFTER a hiccup. (A drifted, frozen camera also gets unstuck for free,
+    //      because seeking it to the master's time flushes + re-inits its decoder.)
+    //  (2) MASTER KICK — the master drives the whole timeline; if IT wedges (frozen with buffer), a
+    //      tiny re-seek unsticks it so playback (and therefore the drift correction) can resume.
+    let _wdState = {};        // holds __master: { ct, since } for the master-freeze detector
+    let _wdLast = 0;          // throttle marker (perf ms)
+    let _playStartedAt = 0;   // when playback last (re)started — for the startup grace
+    let _resyncLogLast = 0;   // throttle for the 'resync' diagnostic line
+    const DRIFT_TOL = 0.5;    // seconds a thumbnail may lead/lag the master before we re-align it
     function playbackWatchdog() {
-      if (!isPlaying) { _wdState = {}; return; }
+      if (!isPlaying || !masterVideo) { _wdState = {}; return; }
       const now = performance.now();
       if (now - _wdLast < 850) return; // run ~1Hz regardless of the 250ms interval
       _wdLast = now;
       // STARTUP GRACE: a freshly (re)started segment — especially a complex/high-bitrate one — needs
-      // a few seconds of UNINTERRUPTED decode to stabilize. A kick is a seek, which flushes the
-      // decoder back to a keyframe and destroys the forward progress it was building; doing that
-      // during warm-up actually PROLONGS the stall (observed: a clip kicked 6× stayed frozen ~10s,
-      // then recovered the moment the kicks stopped). So never intervene in the first few seconds.
+      // a few seconds of UNINTERRUPTED decode to stabilize. Seeking during warm-up flushes the decoder
+      // back to a keyframe and destroys the forward progress it was building, which PROLONGS the stall
+      // (observed: a clip kicked 6× stayed frozen ~10s, then recovered the moment the kicks stopped).
+      // So during warm-up we neither correct drift nor kick — just keep the master-freeze baseline fresh.
       const inStartup = (now - _playStartedAt) < 5000;
-      // First pass: update per-camera "stuck since" state; pick the single longest-frozen camera.
-      let worst = null; // we kick at most ONE per cycle (N simultaneous seeks = a decode thundering herd)
-      Object.entries(videos).forEach(([cam, v]) => {
-        const el = v && v.el;
-        if (!el || el.paused || el.ended || el.seeking) { _wdState[cam] = null; return; }
-        const ct = el.currentTime || 0;
-        const prev = _wdState[cam];
-        if (!prev || Math.abs(ct - prev.ct) > 0.02) { _wdState[cam] = { ct, since: now }; return; }
-        // Candidate only if TRULY frozen (>4s) with buffer — i.e. a real lock, not slow decode.
-        if (now - prev.since > 4000 && el.readyState >= 2 && bufferedAhead(el) > 0.4) {
-          if (!worst || prev.since < worst.since) worst = { cam, el, ct, since: prev.since };
-        }
-      });
-      if (worst && !inStartup) {
-        const { cam, el, ct } = worst;
-        try { el.currentTime = ct + 0.05; const p = el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
-        dlog('kick', { cam, ct: +ct.toFixed(2), ahead: +bufferedAhead(el).toFixed(2), rs: el.readyState });
-        _wdState[cam] = { ct: ct + 0.05, since: now };
+      const mt = masterVideo.currentTime || 0;
+
+      if (!inStartup) {
+        // (1) Re-align any non-master camera that has drifted from the master.
+        let resynced = 0, worstDrift = 0;
+        Object.values(videos).forEach(v => {
+          const el = v && v.el;
+          if (!el || el === masterVideo || el.paused || el.ended || el.seeking || !(el.duration > 0)) return;
+          const drift = (el.currentTime || 0) - mt;
+          if (Math.abs(drift) > DRIFT_TOL) {
+            try { el.currentTime = mt; const p = el.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+            resynced++; worstDrift = Math.abs(drift) > Math.abs(worstDrift) ? drift : worstDrift;
+          }
+        });
+        if (resynced && now - _resyncLogLast > 1500) { _resyncLogLast = now; dlog('resync', { n: resynced, drift: +worstDrift.toFixed(2), mt: +mt.toFixed(2) }); }
+      }
+
+      // (2) Master-freeze kick (past the startup grace): if the master itself is wedged, nudge it.
+      const m = masterVideo;
+      const mp = _wdState['__master'];
+      if (m.paused || m.ended || m.seeking) { _wdState['__master'] = null; }
+      else if (!mp || Math.abs(mt - mp.ct) > 0.02) { _wdState['__master'] = { ct: mt, since: now }; }
+      else if (!inStartup && now - mp.since > 4000 && m.readyState >= 2 && bufferedAhead(m) > 0.4) {
+        try { m.currentTime = mt + 0.05; const p = m.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+        dlog('kick', { cam: 'master', ct: +mt.toFixed(2), ahead: +bufferedAhead(m).toFixed(2), rs: m.readyState });
+        _wdState['__master'] = { ct: mt + 0.05, since: now };
       }
     }
 
