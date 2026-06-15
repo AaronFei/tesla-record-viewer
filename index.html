@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.19.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.19.1</div>
         </div>
       </div>
       
@@ -1427,6 +1427,7 @@
       resetPreload();
       await loadVideosForEvent(currentEvent);
       sweepLeakedDecoders();
+      probeDecodeCapability(currentEvent); // background: log HW-decode capability of this car's clips
       schedulePreload();
       measureSessionDurations(); // background: get real per-segment durations for an accurate timeline
       dlog('select', { segs: session ? session.length : 1, idx: sessionIdx, cams: Object.keys(currentEvent.clips || {}).length, census: videoCensus() });
@@ -1974,6 +1975,51 @@
         };
       } catch (e) { return {}; }
     }
+
+    // ===== HW-decode capability probe (answers: is this segment software-decoded / level-rejected?) =====
+    // Scan a clip for its avcC box → exact H.264 codec string (profile/constraints/level). Tesla declares
+    // a bogus level 1.0 for high-res frames; this lets us ask the browser whether the AS-IS config vs a
+    // level-corrected one vs a half-resolution one is hardware-decodable (powerEfficient) and smooth.
+    function findAvccCodec(bytes) {
+      for (let i = 0; i + 8 < bytes.length; i++) {
+        if (bytes[i] === 0x61 && bytes[i + 1] === 0x76 && bytes[i + 2] === 0x63 && bytes[i + 3] === 0x43 // 'avcC'
+            && bytes[i + 4] === 0x01) { // configurationVersion == 1
+          const profile = bytes[i + 5], constraints = bytes[i + 6], level = bytes[i + 7];
+          const hex = n => n.toString(16).padStart(2, '0');
+          return { profile, constraints, level, str: 'avc1.' + hex(profile) + hex(constraints) + hex(level) };
+        }
+      }
+      return null;
+    }
+    let _decodeProbed = false;
+    async function probeDecodeCapability(ev) {
+      try {
+        if (_decodeProbed) return; // codec config is identical across this car's segments → probe once
+        if (!ev || !navigator.mediaCapabilities || !navigator.mediaCapabilities.decodingInfo) { dlog('decodecap', { err: 'no-api' }); return; }
+        _decodeProbed = true;
+        const order = Object.keys(ev.clips || {}).sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
+        const pick = [order.find(c => c === 'front') || order[0], order.find(c => c !== 'front')].filter(Boolean);
+        const hex = n => n.toString(16).padStart(2, '0');
+        for (const cam of pick) {
+          const vEl = videos[cam] && videos[cam].el;
+          const w = vEl ? vEl.videoWidth : 0, h = vEl ? vEl.videoHeight : 0;
+          const file = await getClipFile(ev.clips[cam]);
+          if (!file) continue;
+          let codec = findAvccCodec(new Uint8Array(await file.slice(0, Math.min(file.size, 3 * 1048576)).arrayBuffer()));
+          if (!codec && file.size > 3 * 1048576) codec = findAvccCodec(new Uint8Array(await file.slice(file.size - 3 * 1048576).arrayBuffer()));
+          if (!codec || !w || !h) { dlog('decodecap', { cam, w, h, codec: codec ? codec.str : null, err: !codec ? 'no-avcC' : 'no-res' }); continue; }
+          const fixed = 'avc1.' + hex(codec.profile) + hex(codec.constraints) + hex(0x33); // level 5.1
+          const variants = [['asis', codec.str, w, h], ['lvlfix', fixed, w, h], ['halfres', fixed, Math.round(w / 2), Math.round(h / 2)]];
+          for (const [tag, c, vw, vh] of variants) {
+            try {
+              const info = await navigator.mediaCapabilities.decodingInfo({ type: 'file', video: { contentType: 'video/mp4; codecs="' + c + '"', width: vw, height: vh, bitrate: 8000000, framerate: 36 } });
+              dlog('decodecap', { cam, tag, codec: c, w: vw, h: vh, sup: info.supported, smooth: info.smooth, pe: info.powerEfficient });
+            } catch (e) { dlog('decodecap', { cam, tag, err: String(e).slice(0, 40) }); }
+          }
+        }
+      } catch (e) { dlog('decodecap', { err: String(e).slice(0, 60) }); }
+    }
+
     function bufferedAhead(v) { // seconds buffered beyond the current play head (0 = starved)
       try { for (let i = 0; i < v.buffered.length; i++) { const s = v.buffered.start(i), e = v.buffered.end(i); if (v.currentTime >= s - 0.25 && v.currentTime <= e + 0.25) return e - v.currentTime; } } catch (e) {}
       return 0;
@@ -2575,6 +2621,7 @@
       await loadVideosForEvent(currentEvent, true);
       if (myGen !== navGen) return; // a newer jump superseded this one; let it own the stage/veil
       sweepLeakedDecoders();
+      probeDecodeCapability(currentEvent);
       dlog('jump', { to: si, census: videoCensus() });
       Object.values(videos).forEach(v => { try { if (v.el.duration > 0) v.el.currentTime = Math.min(localT, v.el.duration); } catch (e) {} });
       isPlaying = false;
