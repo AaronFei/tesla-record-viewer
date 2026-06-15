@@ -365,7 +365,7 @@
         </div>
         <div>
           <div class="font-semibold text-2xl tracking-tight">Tesla Record Viewer</div>
-          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.0</div>
+          <div class="text-[10px] text-zinc-500 -mt-1" id="app-version">v1.14.1</div>
         </div>
       </div>
       
@@ -1295,7 +1295,8 @@
         
         list.forEach((ev) => {
           const camCount = Object.keys(ev.clips).length;
-          const cameras = Object.keys(ev.clips);
+          // Sort by CAMERA_ORDER so every row lists cameras in the same order (scan order varies per event).
+          const cameras = Object.keys(ev.clips).sort((a, b) => CAMERA_ORDER.indexOf(a) - CAMERA_ORDER.indexOf(b));
           
           const row = document.createElement('div');
           row.className = 'event-row';
@@ -1407,6 +1408,12 @@
 
     async function selectEvent(eventData, cardEl = null) {
       if (isExporting) return; // left pane is locked during export
+      // If the clicked clip is part of the CURRENT continuous session, just jump to that segment — this
+      // keeps the already-parsed telemetry + combined timeline (a full reload would resetTelemetry).
+      if (session && session.length > 1) {
+        const si = session.findIndex(e => e.key === eventData.key);
+        if (si >= 0) { jumpToSegment(si, 0); return; }
+      }
       session = continuousMode ? buildSession(eventData) : [eventData];
       sessionIdx = Math.max(0, session.findIndex(e => e.key === eventData.key));
       currentEvent = session[sessionIdx];
@@ -1851,7 +1858,7 @@
       dlog('log-downloaded', {});
     }
 
-    let totalStalls = 0, stallTimer = null, stallCount = 0, stallWindowStart = 0, slowHintLastShown = 0, waitingStart = 0;
+    let totalStalls = 0, stallTimer = null, stallCount = 0, stallWindowStart = 0, slowHintLastShown = 0, waitingStart = 0, lastSegmentStart = 0;
     // Repeatable hint (re-shows on recurring stalls, with a short cooldown so it doesn't spam) + a one-click
     // diagnostics-log download so the issue can be reported.
     function showSlowReadHint(reason) {
@@ -1880,13 +1887,17 @@
       if (el._timer) clearTimeout(el._timer);
       el._timer = setTimeout(() => { try { el.style.opacity = '0'; } catch (e) {} }, 8000);
     }
-    // Reactive: the master <video> fires 'waiting' when it buffer-starves.
+    // Reactive: the master <video> fires 'waiting' when it stalls. Only treat it as a SLOW-SOURCE
+    // signal when the buffer is actually running dry (ahead ≈ 0) AND it isn't a brief boundary
+    // cold-start — a stall with a big buffer ahead is a decode hiccup, not a read problem.
     function onMasterWaiting() {
       if (!isPlaying || isSeeking || !masterVideo) return;
-      totalStalls++; waitingStart = performance.now();
-      dlog('waiting', { ct: +(masterVideo.currentTime || 0).toFixed(2), rs: masterVideo.readyState, ahead: +bufferedAhead(masterVideo).toFixed(2), seg: sessionIdx });
+      const ahead = bufferedAhead(masterVideo);
+      const now = performance.now(), sinceStart = now - lastSegmentStart;
+      dlog('waiting', { ct: +(masterVideo.currentTime || 0).toFixed(2), rs: masterVideo.readyState, ahead: +ahead.toFixed(2), seg: sessionIdx, sinceStart: Math.round(sinceStart) });
+      if (ahead > 1.5 || sinceStart < 2500) return; // not read-starvation (buffer full) or just-after-cut
+      totalStalls++; waitingStart = now;
       if (!stallTimer) stallTimer = setTimeout(() => { stallTimer = null; showSlowReadHint('stall>2s'); }, 2200);
-      const now = performance.now();
       if (now - stallWindowStart > 20000) { stallWindowStart = now; stallCount = 0; }
       if (++stallCount >= 3) showSlowReadHint('frequent');
     }
@@ -1894,7 +1905,7 @@
       if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
       if (waitingStart) { dlog('resumed', { afterMs: Math.round(performance.now() - waitingStart) }); waitingStart = 0; }
     }
-    function resetStallState() { if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; } stallCount = 0; waitingStart = 0; }
+    function resetStallState() { if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; } stallCount = 0; waitingStart = 0; lastSegmentStart = performance.now(); }
     // Proactive: time a small sequential read → MB/s. 6 cams (~10 Mbps each) + preload need roughly
     // >15 MB/s sustained, so flag a clearly-slow source up front.
     async function probeReadSpeed(file) {
